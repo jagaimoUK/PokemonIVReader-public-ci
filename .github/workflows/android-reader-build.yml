@@ -1,0 +1,238 @@
+name: Public Android reader checks
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+
+# Abort superseded test builds instead of compiling each intermediate commit.
+concurrency:
+  group: public-reader-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate independent source ZIP export tool
+        run: python3 tools/test_export_public_snapshot.py
+      - name: Validate public-only file boundaries and known credential formats
+        run: python3 tools/public_snapshot_preflight.py
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # Preserve dependency and transform caches on the feature branch.
+          cache-read-only: false
+      - name: Install Android compile SDK (runner SDK)
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Android SDK must be preinstalled on GitHub runner}"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -Vr | head -n 1)"
+          if [[ -z "$SDKMANAGER" ]]; then
+            echo "::error::Android sdkmanager is missing from runner"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-37.0" "build-tools;37.0.0"
+          if [[ ! -e "$ANDROID_HOME/platforms/android-37" && -d "$ANDROID_HOME/platforms/android-37.0" ]]; then
+            ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+          fi
+      - name: Validate wrapper and build Android debug
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
+      - name: Summarize tests and bounded performance checks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          suites=[ET.parse(p).getroot() for p in Path('app/build/test-results/testDebugUnitTest').glob('TEST-*.xml')]
+          print('Unit tests:',sum(int(s.attrib.get('tests',0)) for s in suites),'failures:',sum(int(s.attrib.get('failures',0)) for s in suites))
+          for suite in suites:
+              for output in suite.iter('system-out'):
+                  for line in (output.text or '').splitlines():
+                      if line.startswith('PERF '): print(line)
+          PY
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Check regional forms, future data and Python/Android catalog parity
+        run: bash verification/check.sh
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run binary format and embedded-metadata preflight
+        run: |
+          python3 tools/test_public_binary_preflight.py
+          python3 tools/public_binary_preflight.py
+      - name: Install pinned Gitleaks and verify official release digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/gitleaks_8.30.1_linux_x64.tar.gz"
+          curl --fail --location --silent --show-error --retry 2 --max-time 90 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
+            -o "$ARCHIVE"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $ARCHIVE" | sha256sum -c -
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP" gitleaks
+          chmod 0755 "$RUNNER_TEMP/gitleaks"
+      - name: Scan source files and complete fresh Git history (redacted)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No source or scan results leave GitHub Actions. Reports remain on
+          # the ephemeral runner and are deliberately not uploaded as artifacts.
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          exe = pathlib.Path(os.environ["RUNNER_TEMP"]) / "gitleaks"
+          report_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "gitleaks_reports"
+          report_dir.mkdir(mode=0o700)
+          scans = [
+              ("worktree", ["dir", "."]),
+              ("history", ["git", ".", "--log-opts=--all"]),
+          ]
+          failed = False
+          for kind, cmd in scans:
+              report = report_dir / (kind + ".json")
+              result = subprocess.run(
+                  [str(exe), *cmd, "--redact=100", "--no-banner",
+                   "--report-format=json", f"--report-path={report}"],
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                  check=False,
+              )
+              if result.returncode not in (0, 1):
+                  print(f"ERROR: Gitleaks {kind} scan incomplete "
+                        f"(exit={result.returncode})")
+                  failed = True
+                  continue
+              if not report.exists():
+                  if result.returncode == 0:
+                      print(f"Gitleaks {kind}: 0 findings")
+                  else:
+                      print(f"ERROR: {kind} findings reported but no report file")
+                      failed = True
+                  continue
+              try:
+                  findings = json.loads(report.read_text(encoding="utf-8"))
+                  if not isinstance(findings, list):
+                      raise ValueError("expected JSON array")
+              except (OSError, ValueError) as exc:
+                  print(f"ERROR: cannot parse {kind} result: {type(exc).__name__}")
+                  failed = True
+                  continue
+              print(f"Gitleaks {kind}: {len(findings)} findings")
+              if bool(findings) != bool(result.returncode):
+                  print(f"ERROR: {kind} result/exit mismatch")
+                  failed = True
+              for item in findings[:30]:
+                  # Never print Secret, Match, Line, or Commit content.
+                  print("  potential leak:", item.get("RuleID", "unknown"),
+                        "at", item.get("File", "<unknown>"),
+                        "line", item.get("StartLine", "?"))
+              if len(findings) > 30:
+                  print(f"  remaining findings hidden: {len(findings)-30}")
+              failed |= bool(findings)
+          if failed:
+              print("Public release blocked: inspect findings privately.")
+              sys.exit(1)
+          print("Gitleaks checks passed. Binary and asset-rights review remain.")
+          PY
+
+  # Validates an actual clean-history snapshot, but NEVER publishes it or
+  # uploads a source archive to GitHub Artifacts.
+  clean-snapshot:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'publication/candidate-no-game-pixels-20261119'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: false
+      - name: Export the real committed source and verify its SHA-256 manifest
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 tools/export_public_snapshot.py \
+            --output "$RUNNER_TEMP/PokemonIVReader-clean-source.zip"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile
+          import subprocess
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          archive = root / "PokemonIVReader-clean-source.zip"
+          manifest = json.loads((root / "PokemonIVReader-clean-source.manifest.json").read_text())
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert manifest["source_commit"] == head
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest["archive_sha256"]
+          expected = {item["path"]: item["sha256"] for item in manifest["files"]}
+          assert len(expected) == manifest["file_count"]
+          assert len(expected) >= 200
+          with ZipFile(archive) as z:
+              names = z.namelist()
+              assert len(names) == len(set(names))
+              assert set(names) == set(expected)
+              assert z.testzip() is None
+              for name in names:
+                  assert hashlib.sha256(z.read(name)).hexdigest() == expected[name]
+                  assert ".git" not in Path(name).parts
+                  assert not name.startswith("app/src/main/assets/go_buttons/")
+                  assert not name.endswith((".apk", ".aab", ".jks", ".keystore"))
+          print(f"Clean archive verified: {len(expected)} files; HEAD matches; all digests match")
+          PY
+      - name: Build isolated single-root-commit repo, without pushing
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/isolated-root"
+          mkdir -p "$STAGE"
+          unzip -q "$RUNNER_TEMP/PokemonIVReader-clean-source.zip" -d "$STAGE"
+          git -C "$STAGE" init -q -b main
+          git -C "$STAGE" add -A
+          git -C "$STAGE" -c user.name="Offline Verification" \
+            -c user.email="offline@example.invalid" \
+            commit -qm "Initial clean source-only snapshot (offline verification)"
+          test "$(git -C "$STAGE" rev-list --count HEAD)" -eq 1
+          test "$(git -C "$STAGE" rev-list --parents HEAD | wc -w)" -eq 1
+          python3 - "$STAGE" "$RUNNER_TEMP/PokemonIVReader-clean-source.manifest.json" <<'PY'
+          import json, pathlib, subprocess, sys
+          root = pathlib.Path(sys.argv[1])
+          manifest = json.loads(pathlib.Path(sys.argv[2]).read_text())
+          paths = subprocess.check_output(
+              ["git", "-C", str(root), "ls-files", "-z"]).decode().strip("\0").split("\0")
+          assert set(paths) == {item["path"] for item in manifest["files"]}
+          print("Offline fresh Git history verified: exactly one root commit, paths match source manifest")
+          PY
