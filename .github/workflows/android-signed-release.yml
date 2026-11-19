@@ -1,0 +1,156 @@
+name: Signed Android APK (manual public release)
+
+# This is deliberately NOT triggered by push or PR. The job can access signing keys.
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag exactly matching Gradle versionName (example v1.5.74)"
+        required: true
+        type: string
+      expected_version_code:
+        description: "Must equal Gradle versionCode and exceed installed_version_code"
+        required: true
+        type: string
+      installed_version_code:
+        description: "Current installed APK versionCode; NEVER uninstall to upgrade"
+        required: true
+        type: string
+
+concurrency:
+  group: android-signed-public-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # No fork, PR, feature branch, old repository, or non-owner can sign.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'jagaimoUK/PokemonIVReader-public-ci' && github.ref == 'refs/heads/main' && github.actor == 'jagaimoUK' }}
+    runs-on: ubuntu-latest
+    environment: android-signed-release
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Verify canonical repository and current source metadata
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_VERSION_CODE: ${{ inputs.expected_version_code }}
+          INSTALLED_VERSION_CODE: ${{ inputs.installed_version_code }}
+        run: |
+          set -euo pipefail
+          bash tools/assert_canonical_repo.sh
+          python3 tools/public_snapshot_preflight.py
+          python3 tools/verify_signed_release_inputs.py
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Android SDK missing}"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -Vr | head -n 1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-37.0" "build-tools;37.0.0"
+          if [[ ! -e "$ANDROID_HOME/platforms/android-37" && -d "$ANDROID_HOME/platforms/android-37.0" ]]; then
+            ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+          fi
+      - name: Build unsigned release and run tests (no secrets injected)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease :app:testDebugUnitTest --no-daemon --stacktrace
+          bash verification/check.sh
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          suites = [ET.parse(p).getroot() for p in Path("app/build/test-results/testDebugUnitTest").glob("TEST-*.xml")]
+          assert suites, "Unit-test reports missing"
+          counts = {k: sum(int(s.attrib.get(k, 0)) for s in suites) for k in ("tests", "failures", "errors")}
+          print("Unit tests:", counts)
+          assert counts["failures"] == counts["errors"] == 0
+          PY
+      - name: Check unused release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release already exists; never replace an APK"; exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --silent >/dev/null 2>&1; then
+            echo "::error::Git tag already exists; refusing to reuse it"; exit 1
+          fi
+      - name: Sign and verify installed-app identity
+        shell: bash
+        env:
+          APK_KEYSTORE_BASE64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_BASE64 }}
+          APK_STORE_PASS: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          APK_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          APK_KEY_PASS: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+          EXPECTED_VERSION_CODE: ${{ inputs.expected_version_code }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for name in APK_KEYSTORE_BASE64 APK_STORE_PASS APK_ALIAS APK_KEY_PASS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing environment signing secret: $name"; exit 1
+            fi
+          done
+          KEYSTORE="$RUNNER_TEMP/android-signer.jks"
+          trap 'rm -f "$KEYSTORE" "$RUNNER_TEMP/reader-aligned.apk"' EXIT
+          printf '%s' "$APK_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          BT="$ANDROID_HOME/build-tools/37.0.0"
+          mkdir -p deliverable
+          "$BT/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/reader-aligned.apk"
+          "$BT/apksigner" sign --ks "$KEYSTORE" --ks-key-alias "$APK_ALIAS" \
+            --ks-pass env:APK_STORE_PASS --key-pass env:APK_KEY_PASS \
+            --out deliverable/PokemonIVReader-signed.apk "$RUNNER_TEMP/reader-aligned.apk"
+          "$BT/apksigner" verify --verbose deliverable/PokemonIVReader-signed.apk
+          ACTUAL_CERT=$("$BT/apksigner" verify --print-certs deliverable/PokemonIVReader-signed.apk |
+            sed -nE '/certificate SHA-256 digest:/ {s/^.*certificate SHA-256 digest:[[:space:]]*([[:xdigit:]:]+).*$/\1/p; q;}' |
+            tr -d ':' | tr '[:upper:]' '[:lower:]')
+          EXPECTED_CERT=$(sed -n 's/^certificateSha256=//p' release/installed-apk-identity.properties |
+            tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
+          [[ "$ACTUAL_CERT" =~ ^[0-9a-f]{64}$ ]] && [[ "$EXPECTED_CERT" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::Invalid signer fingerprint"; exit 1;
+          }
+          if [[ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]]; then
+            echo "::error::Signing certificate differs from the installed app"; exit 1
+          fi
+          BADGING=$("$BT/aapt" dump badging deliverable/PokemonIVReader-signed.apk | grep -m1 '^package:')
+          [[ "$BADGING" == *"name='com.example.pokemonivreader'"* ]] || {
+            echo "::error::Application ID mismatch"; exit 1
+          }
+          [[ "$BADGING" == *"versionCode='$EXPECTED_VERSION_CODE'"* ]] || {
+            echo "::error::APK versionCode mismatch"; exit 1
+          }
+          echo "PASS: APK signature, application ID and versionCode verified"
+          (cd deliverable && sha256sum PokemonIVReader-signed.apk > SHA256SUMS.txt)
+      - name: Publish new public GitHub prerelease (never overwrite)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_VERSION_CODE: ${{ inputs.expected_version_code }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" deliverable/PokemonIVReader-signed.apk deliverable/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "PokemonIVReader $RELEASE_TAG (試験版)" --prerelease \
+            --notes "Signed Android reader APK, versionCode $EXPECTED_VERSION_CODE. Built from Public main. Check the signing certificate and update without uninstalling. Actual-device behavior is not guaranteed by CI."
