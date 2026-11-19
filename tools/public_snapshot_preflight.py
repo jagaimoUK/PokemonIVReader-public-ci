@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-ALLOWED_WORKFLOWS = {'.github/workflows/android-reader-build.yml'}
+ALLOWED_WORKFLOWS = {'.github/workflows/android-reader-build.yml', '.github/workflows/android-signed-release.yml'}
 REQUIRED_NOTICES = {
     'LICENSES/PVPOKE-MIT.txt',
     'LICENSES/POKEAPI-BSD-3-Clause.txt',

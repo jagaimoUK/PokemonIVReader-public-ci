@@ -12,7 +12,7 @@ This file applies to all AI coding assistants and automation operating in this r
 
 ## Release and security gates
 - Use Public GitHub Actions for debug build/unit/regression tests; do not assert a test succeeded unless its exact run passed. Avoid duplicate CI runs.
-- The current Public workflow does NOT yet publish a signed update APK. Never claim Public CI debug output updates a release-signed installed app.
+- Normal Public CI does NOT publish installable APKs. A separate manual owner-only signed APK workflow is available, but it needs explicitly configured Environment secrets, version checks and a reviewed `main` branch; never run it on PRs or feature branches. Never claim a release-signed installed app was updated without a successful signed build and device installation.
 - Never commit signing keys, passwords, tokens, private data or Pokémon GO button pixel crops. Keep original Android `applicationId`, certificate-compatible signing process and installed data intact.
 - Do not store actual user data in tests/logs; prefer synthetic fixtures.
 - Protect history, settings, OCR/recognition learning, tags, pending work and backup/restore compatibility. Fail closed on uncertain destructive automation.
