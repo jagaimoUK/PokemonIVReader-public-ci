@@ -2,8 +2,12 @@ name: Public Android reader checks
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+      - publication/candidate-no-game-pixels-20261119
   pull_request:
+  workflow_dispatch:
 
 
 # Abort superseded test builds instead of compiling each intermediate commit.
