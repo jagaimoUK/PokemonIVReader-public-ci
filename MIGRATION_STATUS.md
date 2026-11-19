@@ -21,6 +21,6 @@ These classifications compare Git ancestry or identifiable code paths; they **do
 
 ## Release and continuity
 
-The old private signed APK workflow is retained for now. Public CI currently compiles/tests but does not upload APKs or sign a user-installable release. Before transferring signing to Public, configure protected secrets/environment, verify certificate + application ID, use a higher versionCode, and test an update **without uninstalling**. Do not copy key material into Git or expose it in Actions logs.
+The old private signed APK workflow is retained for now. Public's normal CI only compiles/tests. A new manual signing workflow is proposed for Public and can publish a prerelease **only after** protected Environment secrets are configured and source/version/certificate checks pass. This is not yet a verified signed release. See `SIGNED_RELEASE_SETUP.md`. Before transferring signing, configure protected secrets/environment, verify certificate + application ID, use a higher versionCode, and test an update **without uninstalling**. Do not copy key material into Git or expose it in Actions logs.
 
 **Rule for future work:** inspect the Public repository first; open an old PR only if needed to recover a specific missing behavior. Commit fixes to Public `main` through a PR when appropriate.
