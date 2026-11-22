@@ -38,6 +38,13 @@ class GoIndividualWorkflowTest {
   override fun skipUnreadableCp() = skipCp
   var tagging=false
   override fun taggingEnabled()=tagging
+  var strictMutation = false
+  var activeQuery = ""
+  var pickerBacks = 0
+  override fun requireMutationProof() = strictMutation
+  override fun searchStillActive(scene: GoWorkflowPolicy.Scene) =
+   GoWorkflowPolicy.showsIndividualSearch(scene, activeQuery)
+  override fun dismissTagPicker(): Boolean { pickerBacks++; return true }
   var allowKeepTagReservation = true
   var keepTagReservations = 0
   override fun reserveKeepTag(): Boolean {
@@ -82,6 +89,116 @@ class GoIndividualWorkflowTest {
  private fun tick(n:Int=1){repeat(n){shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(286))}}
  private fun run(p:Port,t:GoTextInputAccessibilityService.Target,r:MutableList<Boolean> = mutableListOf())=
   GoIndividualWorkflow(Handler(Looper.getMainLooper()),item,t,p){success,_->r+=success}.also{it.start()}
+ private val detailMenu = GoWorkflowPolicy.Box(980,2480,1140,2640)
+ private val menuTag = GoWorkflowPolicy.Box(800,1600,1000,1720)
+ private val prevRow = GoWorkflowPolicy.Box(180,1820,330,1890)
+ private val tagDone = GoWorkflowPolicy.Box(300,2260,930,2410)
+ private val prevChip = GoWorkflowPolicy.Line("prev",GoWorkflowPolicy.Box(500,1320,700,1400))
+
+ private fun scopedList(label: String = "Stunky", count: Int = 1, query: String = item.search) =
+  list(count).let { scene ->
+   scene.copy(lines=listOf(GoWorkflowPolicy.Line(query,GoWorkflowPolicy.Box(90,200,880,260))),
+    cards=scene.cards.map { it.copy(label=label) })
+  }
+
+ private fun picker(checked: Boolean, count: Int = 1) = GoWorkflowPolicy.Scene(
+  tagList=true, tagPickerCount=count, prev=prevRow, prevSelected=checked, tagDone=tagDone,
+  lines=listOf(GoWorkflowPolicy.Line("prev",prevRow)))
+
+ private fun strictPort(scene: GoWorkflowPolicy.Scene) = Port(scene).apply {
+  strictMutation=true; activeQuery=item.search; chained=true; tagging=true; sequence=true
+ }
+
+ @Test fun interruptedAfterNameSaveResumesOnlyMissingTag() {
+  val before=strictPort(scopedList()).apply { acceptNameOkNode=true }
+  val first=run(before,search)
+  tick(3)
+  before.scene=detail(nick="Stunky");tick(2)
+  before.scene=dialog();tick(5)
+  assertEquals(1,before.taps.count { it==ok })
+  assertEquals(listOf(true),before.nameOkNodeAllowed)
+  first.cancel() // GO has applied the name; the job did not receive its saved-detail observation.
+
+  val after=strictPort(scopedList(item.nickname))
+  val result=mutableListOf<Boolean>()
+  run(after,search,result);tick(3)
+  after.scene=detail().copy(menu=detailMenu);tick(2)
+  assertEquals(listOf(search to item.search),after.entered)
+  assertEquals(1,after.taps.count { it==detailMenu })
+  after.scene=GoWorkflowPolicy.Scene(tag=menuTag);tick()
+  after.scene=picker(false);tick(2)
+  assertEquals(1,after.taps.count { it==prevRow })
+  after.scene=picker(true);tick()
+  assertEquals(1,after.taps.count { it==tagDone })
+  after.scene=detail().copy(lines=detail().lines+prevChip);tick()
+  after.scene=list();tick()
+  assertEquals(listOf(true),result)
+  assertFalse(after.taps.contains(ok))
+ }
+
+ @Test fun interruptedAfterTagDoneDoesNotRepeatSelectionOrSave() {
+  val before=strictPort(scopedList(item.nickname))
+  val first=run(before,search);tick(3)
+  before.scene=detail().copy(menu=detailMenu);tick(2)
+  before.scene=GoWorkflowPolicy.Scene(tag=menuTag);tick()
+  before.scene=picker(false);tick()
+  before.scene=picker(true);tick()
+  assertEquals(1,before.taps.count { it==tagDone })
+  first.cancel() // GO saved the tag before Android could verify return or record completion.
+
+  for (chipVisible in listOf(true,false)) {
+   val after=strictPort(scopedList(item.nickname))
+   val result=mutableListOf<Boolean>()
+   run(after,search,result);tick(3)
+   val saved=detail().copy(menu=detailMenu)
+   after.scene=if (chipVisible) saved.copy(lines=saved.lines+prevChip) else saved
+   tick(2)
+   if (!chipVisible) {
+    after.scene=GoWorkflowPolicy.Scene(tag=menuTag);tick()
+    after.scene=picker(true);tick(2)
+    assertEquals(1,after.pickerBacks)
+    after.scene=saved;tick()
+   } else assertFalse(after.taps.contains(detailMenu))
+   after.scene=list();tick()
+   assertEquals(listOf(true),result)
+   assertEquals(listOf(search to item.search), after.entered)
+   assertTrue(after.taps.none { it in listOf(prevRow,tagDone,ok) })
+  }
+ }
+
+ @Test fun strictAutomaticMutationStopsOnAmbiguityAndRejectsWrongScope() {
+  val multiple=strictPort(scopedList(count=2))
+  val multipleResult=mutableListOf<Boolean>()
+  run(multiple,search,multipleResult);tick(3)
+  assertEquals(listOf(false),multipleResult)
+  assertEquals(listOf(search to item.search),multiple.entered)
+  assertTrue(multiple.taps.isEmpty())
+  assertNull(multiple.select)
+
+  val stale=strictPort(scopedList(query="Other&cp131"))
+  val staleRun=run(stale,search);tick(4)
+  assertTrue(stale.taps.isEmpty())
+  staleRun.cancel()
+
+  val mismatched=strictPort(scopedList())
+  val detailRun=run(mismatched,search);tick(3)
+  mismatched.scene=detail(nick="Another");tick(4)
+  assertEquals(listOf(search to item.search),mismatched.entered)
+  assertEquals(listOf(card),mismatched.taps)
+  detailRun.cancel()
+ }
+
+ @Test fun strictMutationStopsBeforeEditingMultipleSelectedInTagPicker() {
+  val port=strictPort(scopedList(item.nickname))
+  val result=mutableListOf<Boolean>()
+  run(port,search,result);tick(3)
+  port.scene=detail().copy(menu=detailMenu);tick(2)
+  port.scene=GoWorkflowPolicy.Scene(tag=menuTag);tick()
+  port.scene=picker(false,count=2);tick()
+  assertEquals(listOf(false),result)
+  assertEquals(0,port.keepTagReservations)
+  assertTrue(port.taps.none { it in listOf(prevRow,tagDone,ok) })
+ }
  @Test fun combinedSearchEntersNameInsteadOfFinishingOnDetail(){
   val p=Port(list());p.chained=true;val r=mutableListOf<Boolean>();val w=run(p,search,r);tick(2)
   p.scene=detail();tick(2);assertTrue(r.isEmpty());assertEquals(listOf(search to item.search,name to item.nickname),p.entered)

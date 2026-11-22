@@ -230,6 +230,17 @@ internal object GoWorkflowPolicy {
         return false
     }
 
+    /** OCR fallback when GO does not expose the search box to accessibility. */
+    fun showsIndividualSearch(scene: Scene, query: String): Boolean {
+        if (!scene.list || scene.searchSuggestions || scene.height <= 0) return false
+        fun compact(text: String) = normalized(text).replace(" ", "")
+        val expected = compact(query)
+        return scene.lines.any { line ->
+            line.box.cy in (scene.height * .06f).toInt()..(scene.height * .30f).toInt() &&
+                compact(line.text.trimEnd(' ', '×', '✕', '✖', '⊗')) == expected
+        }
+    }
+
     fun sameResults(a: Scene, b: Scene, compareLabels: Boolean = true): Boolean = a.list && b.list && a.keyboard == b.keyboard &&
         a.count != null && a.count == b.count && a.width == b.width && a.height == b.height &&
         a.cards.size == b.cards.size && a.cards.zip(b.cards).all { (x,y) ->
@@ -356,6 +367,9 @@ internal class GoIndividualWorkflow(
         fun requestForeground() {}
         fun taggingEnabled(): Boolean = false
         fun reserveKeepTag(): Boolean = true
+        fun requireMutationProof(): Boolean = false
+        fun searchStillActive(scene: GoWorkflowPolicy.Scene): Boolean = false
+        fun dismissTagPicker(): Boolean = false
         fun chainName(): Boolean = false
         fun continuingSequence(): Boolean = false
         fun observationIssue(): String = "画面取得またはOCRの結果がありません"
@@ -382,7 +396,7 @@ internal class GoIndividualWorkflow(
         fun learnCard(choice: GoWorkflowPolicy.Choice) {}
         fun hint(message: String, confirm: (() -> Unit)? = null)
     }
-    enum class Stage { PREPARE, INPUT, RESULTS, CHOICE, DETAIL, NAME_INPUT, NAME_CONFIRM, SAVE, TAG_MENU, TAG_PICK, TAG_VERIFY, TAG_RETURN, RETURN, DONE, STOPPED }
+    enum class Stage { PREPARE, INPUT, RESULTS, CHOICE, DETAIL, NAME_INPUT, NAME_CONFIRM, SAVE, TAG_MENU, TAG_PICK, TAG_VERIFY, TAG_RETURN, TAG_EXISTING_RETURN, RETURN, DONE, STOPPED }
     enum class NameOkAction { REJECTED, NODE, TOUCH }
     private companion object {
         const val OBSERVATION_INTERVAL_MS = 260L
@@ -411,6 +425,7 @@ internal class GoIndividualWorkflow(
     private var previousCloseMiss: GoWorkflowPolicy.Scene? = null
     private var returnBackAccepted: Boolean? = null
     private var searchRetried = false
+    private val verifyMutation = port.requireMutationProof()
     private var tagVerified = false
     private var keepTagReserved = false
     private var namePhase = false
@@ -445,17 +460,23 @@ internal class GoIndividualWorkflow(
         Stage.TAG_RETURN -> !(GoWorkflowPolicy.saved(s,null,item.nickname) && s.lines.any { GoWorkflowPolicy.normalized(it.text)==tagName })
         else -> true
     }
-    fun needsMenu(): Boolean = port.taggingEnabled() && !tagVerified && stage in setOf(Stage.NAME_CONFIRM,Stage.SAVE)
+    fun needsMenu(): Boolean = port.taggingEnabled() && !tagVerified &&
+        (stage in setOf(Stage.NAME_CONFIRM, Stage.SAVE) || (verifyMutation && stage == Stage.DETAIL))
     fun needsClose(scene: GoWorkflowPolicy.Scene): Boolean = when (stage) {
         Stage.DETAIL -> port.continuingSequence() && item.nickname.isBlank() &&
             opened && scene.detail && !scene.keyboard && scene.cp == cp
         Stage.RETURN -> returnBackAccepted == null && sameDetailToClose(scene)
-        Stage.TAG_RETURN -> GoWorkflowPolicy.saved(scene, null, item.nickname)
+        Stage.TAG_RETURN, Stage.TAG_EXISTING_RETURN -> savedName(scene)
         Stage.NAME_CONFIRM, Stage.SAVE -> GoWorkflowPolicy.saved(scene, null, item.nickname) &&
             (!port.taggingEnabled() || hasDetailPrevTag(scene))
         else -> false
     }
     fun start() {
+        if (verifyMutation && (target != GoTextInputAccessibilityService.Target.SEARCH ||
+                !GoSearchIntent.isIndividualQuery(item.search))) {
+            finish(false, "名前・タグ操作の前に個体の検索式を照合してください")
+            return
+        }
         if (target == GoTextInputAccessibilityService.Target.SEARCH && (cp == null || species == null)) { finish(false, "個体を特定できる種名と単一CPが必要です"); return }
         if (target == GoTextInputAccessibilityService.Target.NICKNAME && !GoWorkflowPolicy.validNickname(item.nickname)) {
             finish(false, "名前は12文字以内で指定してください。未入力のまま停止しました"); return
@@ -541,6 +562,10 @@ internal class GoIndividualWorkflow(
     }
     private fun awaitForeground(): Boolean {
         if (port.foreground()) { activeClock.resume(); return false }
+        if (verifyMutation && resultVerified) {
+            finish(false, "個体確認後にGOから離れたため、一覧から再試行してください")
+            return true
+        }
         activeClock.pause(); observationEpoch++
         repeats = 0; previousResults = null; previousNameOk = null; previousCloseMiss = null; lastObservationAt = null
         emptyResultsSince = null
@@ -554,8 +579,8 @@ internal class GoIndividualWorkflow(
             emptyResultsSince = null
         // A stale overlay CP is never an override. PREPARE may legitimately show another Pokémon;
         // it returns to the list and resolves the exact search before any write.
-        if (target == GoTextInputAccessibilityService.Target.SEARCH && !namePhase && stage != Stage.PREPARE && (s.detail || s.rename) && s.cp != null && s.cp != cp) {
-            finish(false, "CP不一致：対象CP$cp／画面CP${s.cp}。未保存のまま停止しました"); return
+        if (target == GoTextInputAccessibilityService.Target.SEARCH && (!namePhase || verifyMutation) && stage != Stage.PREPARE && (s.detail || s.rename) && s.cp != null && s.cp != cp) {
+            finish(false, "CP不一致：対象CP$cp／画面CP${s.cp}。処理を停止しました"); return
         }
         when (stage) {
             Stage.PREPARE -> {
@@ -602,6 +627,25 @@ internal class GoIndividualWorkflow(
                     if (!retrySearch(s)) finish(false, "検索結果が0件です。検索式を確認してください")
                     return
                 }
+                if (verifyMutation && !port.searchStillActive(s)) {
+                    previousResults = null
+                    blocked("名前・タグ操作の前に検索式を確認中")
+                    return
+                }
+                if (verifyMutation && s.count?.let { it > 1 } == true) {
+                    val previous = previousResults
+                    previousResults = s
+                    if (previous != null && GoWorkflowPolicy.sameResults(previous, s))
+                        finish(false, "検索で複数の候補が見つかりました。個体を絞り込むまで名前とタグの操作を停止します")
+                    else blocked("検索結果が複数件のため個体を再照合中")
+                    return
+                }
+                if (verifyMutation && (s.count != 1 ||
+                        s.cards.singleOrNull()?.let { it.cp == cp && it.label.isNotBlank() } != true)) {
+                    previousResults = null
+                    blocked("名前・タグ操作の前に1件のカード名とCPを確認中")
+                    return
+                }
                 if (s.count == null || s.cards.isEmpty()) {
                     previousResults = null
                     blocked(GoWorkflowPolicy.progress(s)); return
@@ -613,9 +657,9 @@ internal class GoIndividualWorkflow(
                     return
                 }
                 val previous = previousResults; previousResults = s
-                val learned = s.count==1 && s.cards.singleOrNull()?.cp==cp && (port.fastResult(s) ||
+                val learned = !verifyMutation && s.count==1 && s.cards.singleOrNull()?.cp==cp && (port.fastResult(s) ||
                     s.cards.singleOrNull()?.label?.let { GoWorkflowPolicy.normalized(it) in setOf(GoWorkflowPolicy.normalized(species.orEmpty()),GoWorkflowPolicy.normalized(item.nickname)) } == true)
-                if (!learned && (previous == null || !GoWorkflowPolicy.sameResults(previous,s,compareLabels=false))) {
+                if (!learned && (previous == null || !GoWorkflowPolicy.sameResults(previous, s, compareLabels = verifyMutation))) {
                     blocked("カード位置を再照合中 / " + GoWorkflowPolicy.progress(s)); return
                 }
                 if (choice != null && chosenScene?.let { GoWorkflowPolicy.sameResults(it, s) } != true) {
@@ -659,7 +703,12 @@ internal class GoIndividualWorkflow(
                 // An accepted gesture may be cancelled by Android or ignored during animation.
                 // Reacquire the same individual across IME/layout changes; retry only from fresh bounds.
                 if (opened && s.list && lastTapResults != null) {
-                    if (!GoWorkflowPolicy.sameResults(checkNotNull(lastTapResults),s,compareLabels=choice != null)) {
+                    if (verifyMutation && (!port.searchStillActive(s) || s.count != 1 ||
+                            !GoWorkflowPolicy.sameResults(checkNotNull(lastTapResults), s))) {
+                        finish(false, "検索結果が変わりました。名前とタグの操作を停止しました")
+                        return
+                    }
+                    if (!GoWorkflowPolicy.sameResults(checkNotNull(lastTapResults), s, compareLabels = verifyMutation || choice != null)) {
                         val index=reacquireTappedCard(s)
                         if(index==null){
                             repeats=0
@@ -682,10 +731,15 @@ internal class GoIndividualWorkflow(
                     return
                 }
                 val searched = lastTapResults
-                val allowMissingCp = s.cp == null && !s.rename && port.skipUnreadableCp() &&
+                val allowMissingCp = !verifyMutation && s.cp == null && !s.rename && port.skipUnreadableCp() &&
                     searched?.count == 1 && searched.cards.size == 1
                 if (!opened || !s.detail || (s.cp != cp && !allowMissingCp)) {
                     repeats = 0; blocked("詳細:${if (s.detail) "検出" else "未検出"} / CP:${if (s.cp == null) "未読取" else "読取済"}"); return
+                }
+                if (verifyMutation && !matchesOpenedIndividual(s, searched)) {
+                    repeats = 0
+                    blocked("開いた個体の名前と検索カードの名前を再照合中")
+                    return
                 }
                 if (++repeats < 2) return
                 resultVerified = true
@@ -698,14 +752,20 @@ internal class GoIndividualWorkflow(
                 if (target == GoTextInputAccessibilityService.Target.SEARCH && (!port.chainName() || item.nickname.isBlank())) {
                     if (port.continuingSequence()) startReturn(s)
                     else finish(true, "対象の詳細画面を確認しました")
+                } else if (verifyMutation && savedName(s)) {
+                    namePhase = true
+                    closeSavedDetail(s)
+                } else if (verifyMutation && GoWorkflowPolicy.nameOnDetail(s)?.let(GoWorkflowPolicy::normalized) ==
+                    GoWorkflowPolicy.normalized(item.nickname)) {
+                    blocked("現在の名前と設定した名前の表記を確認中")
                 } else enterName()
             }
             Stage.NAME_CONFIRM, Stage.SAVE -> {
-                if (GoWorkflowPolicy.saved(s, null, item.nickname)) {
+                if (savedName(s)) {
                     closeSavedDetail(s)
-                } else if (stage == Stage.NAME_CONFIRM || nameOkCancelled) {
+                } else if (stage == Stage.NAME_CONFIRM || (!verifyMutation && nameOkCancelled)) {
                     confirmName(s)
-                } else if (nameOkAction == NameOkAction.NODE) {
+                } else if (!verifyMutation && nameOkAction == NameOkAction.NODE) {
                     retryUnconfirmedNameClick(s)
                 } else {
                     if (s.keyboard && !s.rename) port.dismissNameKeyboard()
@@ -714,21 +774,36 @@ internal class GoIndividualWorkflow(
                 }
             }
             Stage.TAG_MENU -> {
+                if (verifyMutation && s.detail && !savedName(s)) {
+                    blocked("タグ操作の前に確認した個体と名前を再照合中")
+                    return
+                }
                 if (s.tag != null && port.tap(s.tag)) { stage=Stage.TAG_PICK; deadline=now()+25_000L }
                 else blocked("TAGメニューの表示待ち")
             }
             Stage.TAG_PICK -> {
+                if (verifyMutation && !safePicker(s)) return
                 if (!s.tagList || s.prev == null || s.prevSelected == null) { blocked("${tagName}の行とチェック状態を確認中。未作成の場合はタグを作成してください"); return }
-                if (s.prevSelected) finishTagSelection(s)
+                if (s.prevSelected && verifyMutation) {
+                    // The picker was opened from the revalidated detail. Its check
+                    // predated this run: use Back, so no selection or Done is sent.
+                    if (reserveKeepTag() && port.dismissTagPicker()) {
+                        stage = Stage.TAG_EXISTING_RETURN
+                        deadline = now() + 15_000L
+                    } else blocked("確認済みタグの画面を保存せず閉じられるのを待っています")
+                } else if (s.prevSelected) finishTagSelection(s)
                 else if (reserveKeepTag() && port.tap(s.prev)) stage=Stage.TAG_VERIFY
             }
             Stage.TAG_VERIFY -> {
+                if (verifyMutation && !safePicker(s)) return
                 if (s.tagList && s.prevSelected == true) finishTagSelection(s)
                 else blocked("${tagName}のチェック反映を確認中。二重タップはしません")
             }
-            Stage.TAG_RETURN -> {
-                if (GoWorkflowPolicy.saved(s,null,item.nickname) && hasDetailPrevTag(s)) { tagVerified=true; closeSavedDetail(s) }
-                else blocked("タグ保存後の詳細画面を確認中")
+            Stage.TAG_RETURN, Stage.TAG_EXISTING_RETURN -> {
+                if (savedName(s) && (stage == Stage.TAG_EXISTING_RETURN || hasDetailPrevTag(s))) {
+                    tagVerified = true
+                    closeSavedDetail(s)
+                } else blocked("タグ確認後に同じ個体の詳細画面へ戻るのを待っています")
             }
             Stage.RETURN -> {
                 if (s.list && !s.searchSuggestions && !s.detail && !s.rename && !s.tagList &&
@@ -758,6 +833,29 @@ internal class GoIndividualWorkflow(
             else -> Unit
         }
     }
+    private fun matchesOpenedIndividual(scene: GoWorkflowPolicy.Scene, results: GoWorkflowPolicy.Scene?): Boolean {
+        if (!scene.detail || scene.list || scene.tagList || scene.keyboard || scene.rename) return false
+        val cardName = results?.cards?.singleOrNull()?.label ?: return false
+        val detailName = GoWorkflowPolicy.nameOnDetail(scene) ?: return false
+        return GoWorkflowPolicy.normalized(cardName) == GoWorkflowPolicy.normalized(detailName)
+    }
+
+    private fun savedName(scene: GoWorkflowPolicy.Scene): Boolean =
+        if (verifyMutation) !scene.list && !scene.tagList && GoWorkflowPolicy.saved(scene, cp, item.nickname) &&
+            GoWorkflowPolicy.nameOnDetail(scene) == item.nickname
+        else GoWorkflowPolicy.saved(scene, null, item.nickname)
+
+    private fun safePicker(scene: GoWorkflowPolicy.Scene): Boolean {
+        if (scene.tagList && scene.tagPickerCount?.let { it != 1 } == true) {
+            finish(false, "タグ画面で選択中の個体が1体ではないため停止しました")
+            return false
+        }
+        val exact = GoTagRecognition.namedTagRow(scene, tagName)
+        if (scene.tagPickerCount == 1 && exact != null && exact == scene.prev) return true
+        blocked("タグ操作の対象が1体で、対象タグの行が一致することを確認中")
+        return false
+    }
+
     private fun reacquireTappedCard(scene:GoWorkflowPolicy.Scene):Int? {
         val before=lastTapResults ?: return null
         val selected=before.cards.getOrNull(lastTapIndex) ?: return null

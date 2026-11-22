@@ -1799,9 +1799,12 @@ class GoTextInputAccessibilityService : AccessibilityService() {
     }
 
     private fun startIndividual(
-        sourceItem: OverlayQueueStore.Item, target: Target, continuingSequence: Boolean, finishAfterName: Boolean,
+        sourceItem: OverlayQueueStore.Item, requestedTarget: Target, continuingSequence: Boolean, finishAfterName: Boolean,
         skipUnreadableCp: Boolean, reserveKeepTag: () -> Boolean, result: (Boolean, String) -> Unit,
     ) {
+        // Automatic writes always reacquire the individual. Only the explicit
+        // manual handoff may type into an editor opened by the user.
+        val target = if (!finishAfterName && sourceItem.nickname.isNotBlank()) Target.SEARCH else requestedTarget
         // Defense in depth: reject a prev-reset expression at the service boundary,
         // even if a future UI accidentally calls the individual SEARCH route.
         if (target == Target.SEARCH && !GoSearchIntent.isIndividualQuery(sourceItem.search)) {
@@ -1946,6 +1949,11 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             override fun requestForeground() = resumeGame()
             override fun taggingEnabled() = !finishAfterName
             override fun reserveKeepTag() = reserveKeepTag.invoke()
+            override fun requireMutationProof() = !finishAfterName && item.nickname.isNotBlank()
+            override fun searchStillActive(scene: GoWorkflowPolicy.Scene): Boolean =
+                cleanupSearchNode(item.search) != null || GoWorkflowPolicy.showsIndividualSearch(scene, item.search)
+            override fun dismissTagPicker(): Boolean =
+                gameInForeground() && !keyboardVisible() && performGlobalAction(GLOBAL_ACTION_BACK)
             override fun chainName() = true
             override fun finishAfterName() = finishAfterName
             override fun skipUnreadableCp() = skipUnreadableCp
