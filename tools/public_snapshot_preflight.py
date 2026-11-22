@@ -33,7 +33,7 @@ BLOCKED_NAMES = {'.env', '.env.local', 'id_rsa', 'id_ed25519'}
 def check() -> int:
     raw = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT)
     files = [pathlib.Path(v.decode('utf-8', 'surrogateescape')) for v in raw.split(b'\0') if v]
-    names = {str(p) for p in files}
+    names = {p.as_posix() for p in files}
     findings: list[str] = []
     skipped_binary = 0
     for required in sorted(REQUIRED_NOTICES - names):

@@ -512,6 +512,11 @@ internal fun IvReaderScreen(ivRevision: Int, refreshOnOpen: Boolean = true) {
                 context.startActivity(Intent(context, CatchTrialActivity::class.java))
             }) { Text("捕獲の試験版") }
         }
+        item {
+            TextButton(onClick = {
+                context.startActivity(Intent(context, ReaderIndividualSyncActivity::class.java))
+            }) { Text("確認済み個体の同期") }
+        }
         if(actionMessage.isNotBlank()) { item { Text(actionMessage,style=MaterialTheme.typography.bodySmall) } }
         item {
             Text("自動読み取り履歴", style = MaterialTheme.typography.titleMedium)
