@@ -27,6 +27,7 @@
                 <data android:scheme="pokemonivreader" android:host="automation" />
             </intent-filter>
         </activity>
+        <activity android:name=".ReaderIndividualSyncActivity" android:exported="false" android:label="確認済み個体の同期" />
         <activity android:name=".ReaderBackupActivity" android:exported="false" android:label="Android履歴バックアップ" />
         <activity android:name=".catchassist.CatchTrialActivity" android:exported="false" android:label="捕獲の試験版" android:screenOrientation="portrait" />
         <activity android:name=".FlashcardActivity" android:exported="false" android:label="技カウント" android:windowSoftInputMode="adjustResize" />

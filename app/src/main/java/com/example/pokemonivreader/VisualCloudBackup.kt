@@ -19,7 +19,11 @@ import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONObject
 
 class ReaderApplication:Application() {
-    override fun onCreate() { super.onCreate();VisualCloudBackup.install(this) }
+    override fun onCreate() {
+        super.onCreate()
+        VisualCloudBackup.install(this)
+        runCatching { ReaderIndividualSync.schedule(this) }
+    }
 }
 
 internal object VisualCloudBackup {
