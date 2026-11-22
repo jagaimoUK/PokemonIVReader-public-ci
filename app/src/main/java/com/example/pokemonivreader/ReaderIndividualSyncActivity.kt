@@ -1,7 +1,10 @@
 package com.example.pokemonivreader
 
 import android.app.AlertDialog
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.text.InputFilter
 import android.text.InputType
 import android.view.View
@@ -11,6 +14,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import com.example.pokemonivreader.overlayqueue.GoGameLaunch
+import com.example.pokemonivreader.overlayqueue.OverlayCopyQueueController
+import com.example.pokemonivreader.overlayqueue.OverlayQueueStore
 import org.json.JSONObject
 
 class ReaderIndividualSyncActivity : ComponentActivity() {
@@ -135,6 +141,54 @@ class ReaderIndividualSyncActivity : ComponentActivity() {
         }
         if (pending != null && !blocked) {
             content.button("未送信の変更を再送") { local { schedule(); render() } }
+        }
+        val catalog = PokemonCatalog.get(applicationContext)
+        when (val handoff = ReaderIndividualQueueHandoff.evaluate(store, id, catalog)) {
+            is ReaderIndividualQueueHandoff.Decision.Ready -> {
+                content.button("同期済みニックネームを自動整理キューへ引き渡す") {
+                    local {
+                        val queueStore = OverlayQueueStore(applicationContext)
+                        try {
+                            when (val result = ReaderIndividualQueueHandoff.enqueue(store, id, catalog, queueStore)) {
+                                is ReaderIndividualQueueHandoff.EnqueueResult.Blocked -> {
+                                    status.text = result.reason
+                                }
+                                is ReaderIndividualQueueHandoff.EnqueueResult.Queued -> {
+                                    if (result.alreadyCompleted) {
+                                        status.text = "この確認済み個体の希望ニックネームは現在の自動整理キューで反映確認済みです。"
+                                    } else {
+                                        status.text = if (result.reused)
+                                            "未完了の自動整理キューを再開できます（${result.prepared.pair.nickname}）。"
+                                        else
+                                            "確認済み個体の希望ニックネーム「${result.prepared.pair.nickname}」を自動整理キューへ引き渡しました。"
+                                        openOverlayQueue()
+                                    }
+                                }
+                            }
+                        } finally {
+                            queueStore.close()
+                        }
+                        render()
+                    }
+                }
+            }
+            is ReaderIndividualQueueHandoff.Decision.Blocked -> {
+                content.button("同期済みニックネームを自動整理キューへ引き渡す", enabled = false) {}
+                content.label("自動整理へ引き渡し不可：${handoff.reason}")
+            }
+        }
+    }
+
+    private fun openOverlayQueue() {
+        if (!Settings.canDrawOverlays(this)) {
+            status.text = "自動整理キューへ引き渡しました。オーバーレイを表示するには「他のアプリの上に表示」を許可してください。"
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            return
+        }
+        if (OverlayCopyQueueController.get(this).onImported()) {
+            if (!GoGameLaunch.open(this)) {
+                status.text = "自動整理キューへ引き渡しました。Pokémon GOを開いて自動整理を開始してください。"
+            }
         }
     }
 

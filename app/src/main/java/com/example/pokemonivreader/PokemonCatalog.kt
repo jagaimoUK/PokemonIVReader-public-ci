@@ -134,6 +134,20 @@ internal class PokemonCatalog private constructor(array: JSONArray, rankingProvi
                 name.none { it in "&!,;|\r\n" }
         }
 
+    internal fun goEnglishSpeciesName(species: Species): String? =
+        if (species.id == "flabebe") "Flabébé" else cleanEnglishSpeciesName(species)
+
+    internal fun goRegionalFiltersForSpecies(species: Species): List<String> {
+        val regionsByForm = mapOf("alolan" to "alola", "galarian" to "galar",
+            "hisuian" to "hisui", "paldean" to "paldea")
+        regionsByForm[species.form]?.let { return listOf(it) }
+        val dex = dexById[species.id] ?: return emptyList()
+        return byId.values.asSequence()
+            .filter { dexById[it.id] == dex }
+            .mapNotNull { regionsByForm[it.form] }
+            .distinct().sorted().map { "!$it" }.toList()
+    }
+
     /** Human-readable GO search token, preserving the imported language where possible.
      * Numeric IDs convert only when the target GO display language is explicitly known (ja/en).
      * Never fall back to Locale.getDefault() or guess a nickname/form. */
