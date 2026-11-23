@@ -68,15 +68,22 @@ internal object ReaderIndividualSync {
         return cipher.doFinal(Base64.decode(body, Base64.NO_WRAP)).toString(Charsets.UTF_8)
     }
 
-    fun fetch(code: String, id: String): JSONObject {
-        val snapshot = call(code, JSONObject().put("action", "individual_get").put("instance_id", id))
+    fun fetch(code: String, id: String, origin: String = ReaderWebEndpoints.ORIGIN): JSONObject {
+        val snapshot = call(code, JSONObject().put("action", "individual_get").put("instance_id", id), origin)
         ReaderIndividualSyncStore.verifySnapshot(id, snapshot)
         return snapshot
     }
 
-    fun call(code: String, request: JSONObject): JSONObject {
+    internal fun verifiedEndpoint(origin: String): String {
+        val allowed = origin == ReaderWebEndpoints.ORIGIN ||
+            ReaderWebEndpoints.parseIsolatedHttpsOrigin(origin) == origin
+        require(allowed) { "許可されていない同期接続先です" }
+        return "$origin/app-api/reader-sync"
+    }
+
+    fun call(code: String, request: JSONObject, origin: String = ReaderWebEndpoints.ORIGIN): JSONObject {
         require(request.getString("instance_id") == instanceId(code))
-        val http = URL(ReaderWebEndpoints.ORIGIN + "/app-api/reader-sync").openConnection() as HttpsURLConnection
+        val http = URL(verifiedEndpoint(origin)).openConnection() as HttpsURLConnection
         try {
             http.requestMethod = "POST"
             http.instanceFollowRedirects = false
@@ -132,13 +139,14 @@ internal object ReaderIndividualSync {
 class ReaderIndividualSyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result = try {
         val store = ReaderIndividualSyncStore(applicationContext)
+        val origin = ReaderWebEndpoints.syncOrigin(applicationContext)
         val retry = ReaderIndividualSync.flush(store) { record, request ->
             val code = try {
                 ReaderIndividualSync.open(record.getString("credential"))
             } catch (_: Exception) {
                 throw ReaderIndividualSync.RemoteError(401)
             }
-            ReaderIndividualSync.call(code, request)
+            ReaderIndividualSync.call(code, request, origin)
         }
         if (retry) Result.retry() else Result.success()
     } catch (_: Exception) {

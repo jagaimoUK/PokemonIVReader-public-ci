@@ -47,7 +47,7 @@ class ReaderIndividualSyncActivity : ComponentActivity() {
         page.button("接続する個体を確認") {
             val supplied = code.text.toString().trim()
             runCatching { ReaderIndividualSync.instanceId(supplied) }.onSuccess { id ->
-                remote({ ReaderIndividualSync.fetch(supplied, id) }) { response ->
+                remote({ ReaderIndividualSync.fetch(supplied, id, ReaderWebEndpoints.syncOrigin(applicationContext)) }) { response ->
                     AlertDialog.Builder(this)
                         .setTitle("この個体と照合しましたか？")
                         .setMessage(describe(response.getJSONObject("individual")) + "\n手元の個体と照合した場合に登録してください。")
@@ -66,6 +66,36 @@ class ReaderIndividualSyncActivity : ComponentActivity() {
         }
         status = TextView(this)
         page.addView(status)
+        if (ReaderWebEndpoints.isDebuggable(applicationContext)) {
+            val currentOrigin = TextView(this)
+            fun updateOriginLabel() {
+                currentOrigin.text = "同期接続先（デバッグ限定）: ${ReaderWebEndpoints.syncOrigin(applicationContext)}"
+            }
+            updateOriginLabel()
+            page.addView(currentOrigin)
+            val originInput = EditText(this).apply {
+                hint = "隔離テスト用HTTPSオリジン（例: https://pokemoniv-staging.duckdns.org）"
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                isSaveEnabled = false
+            }
+            page.addView(originInput)
+            page.button("隔離HTTPSオリジンを適用（デバッグ限定）") {
+                try {
+                    val saved = ReaderWebEndpoints.setDebugSyncOrigin(applicationContext, originInput.text.toString())
+                    originInput.setText(saved)
+                    updateOriginLabel()
+                    status.text = "隔離テスト用接続先を設定しました: $saved"
+                } catch (e: Exception) {
+                    status.text = e.message ?: "隔離テスト用HTTPSオリジンを確認してください。"
+                }
+            }
+            page.button("既定（本番）接続先に戻す") {
+                ReaderWebEndpoints.clearDebugSyncOrigin(applicationContext)
+                originInput.text.clear()
+                updateOriginLabel()
+                status.text = "同期接続先を既定に戻しました。"
+            }
+        }
         page.button("端末の同期状態を表示") { local { render() } }
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         page.addView(content)
@@ -132,7 +162,7 @@ class ReaderIndividualSyncActivity : ComponentActivity() {
         content.button("Webの最新値を取得", pending == null) {
             remote({
                 val code = ReaderIndividualSync.open(record.getString("credential"))
-                ReaderIndividualSync.fetch(code, id)
+                ReaderIndividualSync.fetch(code, id, ReaderWebEndpoints.syncOrigin(applicationContext))
             }) { result ->
                 store.refresh(id, result)
                 status.text = "Webの最新値を取得しました。"
