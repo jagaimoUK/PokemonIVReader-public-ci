@@ -131,10 +131,122 @@ internal class GoButtonTemplateStore(
         editor.commit()
     }
 
-    fun reset(): Boolean = synchronized(GoButtonTemplateStore::class.java) { prefs.edit().clear().commit() }
+    fun reset(): Boolean = synchronized(GoButtonTemplateStore::class.java) {
+        cached.clear()
+        prefs.edit().clear().commit()
+    }
+
+    data class ImportResult(val importedRoles: Int, val importedSamples: Int, val skippedRoles: Int)
+
+    fun summaryText(): String {
+        val allRoles = roles()
+        var activeRoles = 0
+        var totalSamples = 0
+        var searchSamples = 0
+        for (role in allRoles) {
+            val count = count(role)
+            if (count > 0) {
+                activeRoles++
+                totalSamples += count
+                if (role.id == GoLearningTarget.SEARCH.name) searchSamples = count
+            }
+        }
+        return "登録済みボタン: ${activeRoles}種類 / 合計 ${totalSamples}サンプル（検索の虫眼鏡: ${searchSamples}件）"
+    }
+
+    fun exportTemplatesJson(): String = synchronized(GoButtonTemplateStore::class.java) {
+        val rolesArray = JSONArray()
+        for (role in roles()) {
+            val samples = decode(prefs.getString(role.id, null))
+            if (samples.isEmpty()) continue
+            rolesArray.put(
+                JSONObject()
+                    .put("id", role.id)
+                    .put("label", role.label)
+                    .put("screen", role.screen)
+                    .put("samples", JSONArray(encode(samples)))
+            )
+        }
+        JSONObject()
+            .put("format", EXPORT_FORMAT)
+            .put("schema", EXPORT_SCHEMA)
+            .put("exportedAt", System.currentTimeMillis())
+            .put("roles", rolesArray)
+            .toString()
+    }
+
+    fun importTemplatesJson(raw: String, overwriteExisting: Boolean = false): ImportResult {
+        require(raw.length <= MAX_EXPORT_BYTES) { "学習データファイルが大きすぎます（512KB以下にしてください）" }
+        val root = try {
+            JSONObject(raw)
+        } catch (e: Exception) {
+            throw IllegalArgumentException("JSON形式の学習データではありません", e)
+        }
+        require(root.optString("format") == EXPORT_FORMAT) { "対応していない学習データ形式です" }
+        require(root.optInt("schema", -1) == EXPORT_SCHEMA) { "対応していない学習データバージョンです" }
+        val rolesArray = root.optJSONArray("roles")
+            ?: throw IllegalArgumentException("学習データに roles が含まれていません")
+        require(rolesArray.length() <= MAX_EXPORT_ROLES) { "登録ボタン数が上限を超えています" }
+
+        data class ValidatedRole(
+            val role: Role,
+            val samples: List<GoButtonMatcher.Template>,
+            val isBuiltin: Boolean,
+        )
+
+        val validated = mutableListOf<ValidatedRole>()
+        val seenIds = mutableSetOf<String>()
+        for (i in 0 until rolesArray.length()) {
+            val obj = rolesArray.optJSONObject(i)
+                ?: throw IllegalArgumentException("学習データの項目形式が不正です")
+            val id = obj.optString("id", "").trim()
+            val builtin = GoLearningTarget.entries.firstOrNull { it.name == id }
+            require(builtin != null || CUSTOM_ID_PATTERN.matches(id)) { "不正なボタンIDが含まれています: $id" }
+            require(seenIds.add(id)) { "重複したボタンIDが含まれています: $id" }
+            val label = obj.optString("label", "").trim()
+            require(validLabel(label)) { "不正なボタン名が含まれています" }
+            val screen = obj.optString("screen", "").trim()
+            require(screen.length <= 80 && screen.none { it.isISOControl() }) { "不正な画面名が含まれています" }
+            val samplesArr = obj.optJSONArray("samples")
+                ?: throw IllegalArgumentException("サンプル配列が不正です")
+            require(samplesArr.length() in 1..MAX_SAMPLES) { "サンプル数が範囲外です" }
+            val decoded = decode(samplesArr.toString())
+            require(decoded.size == samplesArr.length()) { "破損または不正なサンプルデータが含まれています" }
+            validated += ValidatedRole(Role(id, label, screen), decoded, builtin != null)
+        }
+
+        return synchronized(GoButtonTemplateStore::class.java) {
+            var importedRoles = 0
+            var importedSamples = 0
+            var skippedRoles = 0
+            val editor = prefs.edit()
+            for (entry in validated) {
+                val existing = decode(prefs.getString(entry.role.id, null))
+                if (existing.isNotEmpty() && !overwriteExisting) {
+                    skippedRoles++
+                    continue
+                }
+                editor.putString(entry.role.id, encode(entry.samples))
+                if (!entry.isBuiltin) {
+                    editor.putString("label:${entry.role.id}", entry.role.label)
+                    editor.putString("screen:${entry.role.id}", entry.role.screen)
+                }
+                importedRoles++
+                importedSamples += entry.samples.size
+            }
+            check(editor.commit()) { "学習データの保存に失敗しました" }
+            cached.clear()
+            ImportResult(importedRoles, importedSamples, skippedRoles)
+        }
+    }
 
     companion object {
         const val MAX_SAMPLES = 4
+        const val EXPORT_FORMAT = "pokemonivreader-button-templates-v1"
+        const val EXPORT_SCHEMA = 1
+        const val MAX_EXPORT_BYTES = 512 * 1024
+        const val MAX_EXPORT_ROLES = 64
+        private val CUSTOM_ID_PATTERN = Regex("^custom_[0-9a-fA-F-]{36}$")
         fun validLabel(label: String) = label.trim().length in 1..40 && label.none { it.isISOControl() }
 
         fun gray(bitmap: Bitmap): GoButtonMatcher.Gray {

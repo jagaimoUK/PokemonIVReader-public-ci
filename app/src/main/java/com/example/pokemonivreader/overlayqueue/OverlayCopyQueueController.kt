@@ -266,8 +266,10 @@ class OverlayCopyQueueController private constructor(private val app: Context) {
     }
     private fun renderInputStatus(message: String?) {
         inputStatus?.apply {
-            text = message.orEmpty()
-            visibility = if (message.isNullOrBlank()) View.GONE else View.VISIBLE
+            val active = !message.isNullOrBlank()
+            text = if (active) message else "状態：待機中（操作の結果・停止理由はここに表示されます）"
+            visibility = View.VISIBLE
+            setTextColor(if (active) Color.rgb(225, 244, 232) else Color.rgb(160, 178, 168))
         }
     }
     private fun background(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(24).toFloat() }
@@ -1053,10 +1055,14 @@ class OverlayCopyQueueController private constructor(private val app: Context) {
         // Learning feedback returns here even if the search panel is being recreated.
         inputStatus = label("", 11f).apply {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-            visibility = View.GONE
             maxLines = 5
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(34, 44, 56))
+                cornerRadius = dp(6).toFloat()
+            }
             setTextColor(Color.rgb(205, 227, 216))
-        }.also { root.addView(it, LinearLayout.LayoutParams(-1, -2)) }
+        }.also { root.addView(it, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2); bottomMargin = dp(2) }) }
         renderInputStatus(learningResult)
         confirmButton = button("種・姿・IVを照合して続行") {
             val action = confirmAction

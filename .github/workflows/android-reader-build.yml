@@ -66,6 +66,13 @@ jobs:
                   for line in (output.text or '').splitlines():
                       if line.startswith('PERF '): print(line)
           PY
+      - name: Upload debug APK artifact for isolated testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
   catalog:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -18,3 +18,8 @@ This file applies to all AI coding assistants and automation operating in this r
 - Protect history, settings, OCR/recognition learning, tags, pending work and backup/restore compatibility. Fail closed on uncertain destructive automation.
 - Do **not** use the ChatGPT-connected PvPoke MCP, including indirect tool calls.
 - Never alter the original Private repos, production deployments, signing secrets or repository visibility without explicit authorization.
+
+## User-facing test & operation instructions (2026-11-23)
+- When guiding the user through physical device tests or manual operations, **do not omit subjects or objects**: explicitly state **which app** (`厳選アプリ (Web)` / `読み取りアプリ (Android)` / `Pokémon GO`), **which screen/collapsible/input/button**, and **where/what exact label or UI change indicates pass vs. block/conflict**.
+- Focus concretely on points where the user could get stuck or confuse apps/screens, rather than making every trivial step verbose.
+
