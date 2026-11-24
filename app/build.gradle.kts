@@ -26,8 +26,8 @@ android {
         minSdk = 28
         targetSdk = 37
         // Test build updated in place from signed 1.5.72 / 97; keep the existing app ID and signer.
-        versionCode = 99
-        versionName = "1.5.74"
+        versionCode = 100
+        versionName = "1.5.75"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
