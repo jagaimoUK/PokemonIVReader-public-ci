@@ -390,6 +390,59 @@ class GoButtonLearningTest {
         assertTrue(GoEditorGate.allow(true, true, true, true, false, false, true, false, true))
         assertFalse(GoEditorGate.allow(true, true, false, true, false, false, true, false, true))
     }
+
+    @Test fun exportAndImportTemplatesPreservesExistingSamplesAndRejectsInvalidPayloads() {
+        val sample = GoButtonMatcher.Template(
+            GoButtonMatcher.Gray(16, 16, FloatArray(256) { if (it % 2 == 0) 20f else 220f }),
+            0.25f
+        )
+        val otherSample = GoButtonMatcher.Template(
+            GoButtonMatcher.Gray(16, 16, FloatArray(256) { if (it % 3 == 0) 30f else 210f }),
+            0.60f
+        )
+        assertTrue(store.save(search, sample))
+        val custom = store.custom("カスタムボタン", "一覧")
+        assertTrue(store.save(custom, sample))
+
+        val exported = store.exportTemplatesJson()
+        assertTrue(exported.contains(GoButtonTemplateStore.EXPORT_FORMAT))
+
+        // Import into a target store that already has a different role sample -> preserves existing, adds missing.
+        val prefs = context.getSharedPreferences("go_button_templates_v1", android.content.Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val targetStore = GoButtonTemplateStore(context)
+        assertTrue(targetStore.save(nickname, otherSample))
+
+        val result = targetStore.importTemplatesJson(exported, overwriteExisting = false)
+        assertEquals(2, result.importedRoles)
+        assertEquals(2, result.importedSamples)
+        assertEquals(0, result.skippedRoles)
+        assertEquals(1, targetStore.load(search).size)
+        assertEquals(1, targetStore.load(nickname).size)
+        assertEquals(0.60f, targetStore.load(nickname).first().yRatio, 0.001f)
+
+        // Re-importing without overwrite skips existing roles cleanly.
+        val second = targetStore.importTemplatesJson(exported, overwriteExisting = false)
+        assertEquals(0, second.importedRoles)
+        assertEquals(2, second.skippedRoles)
+
+        // Malformed / wrong format payloads must fail closed without mutating existing data.
+        for (bad in listOf(
+            "not-json",
+            """{"format":"wrong","schema":1,"roles":[]}""",
+            """{"format":"${GoButtonTemplateStore.EXPORT_FORMAT}","schema":99,"roles":[]}""",
+            """{"format":"${GoButtonTemplateStore.EXPORT_FORMAT}","schema":1,"roles":[{"id":"../evil","label":"bad","screen":"","samples":[]}]}"""
+        )) {
+            var threw = false
+            try {
+                targetStore.importTemplatesJson(bad)
+            } catch (_: IllegalArgumentException) {
+                threw = true
+            }
+            assertTrue("Expected rejection for $bad", threw)
+        }
+        assertEquals(1, targetStore.load(search).size)
+    }
 }
 
 
