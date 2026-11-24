@@ -23,6 +23,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Verify canonical public development repository
         run: bash tools/assert_canonical_repo.sh
+      - name: Test manual signed APK release input and workflow guards
+        run: python3 tools/test_signed_release_policy.py
       - name: Validate independent source ZIP export tool
         run: python3 tools/test_export_public_snapshot.py
       - name: Validate public-only file boundaries and known credential formats
