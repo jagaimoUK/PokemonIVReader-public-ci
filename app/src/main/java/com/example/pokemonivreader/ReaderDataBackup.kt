@@ -175,6 +175,11 @@ internal object ReaderDataBackup {
         name == "visual-memory.zip" || (name.startsWith("captures/") &&
             captureName.matches(name.removePrefix("captures/")))
 
+    internal fun isCompatiblePackage(manifestPackage: String, currentPackage: String): Boolean {
+        val base = currentPackage.removeSuffix(".debug")
+        return manifestPackage == base || manifestPackage == "$base.debug"
+    }
+
     private fun parse(bytes: ByteArray, packageName: String): Parsed {
         require(bytes.size <= MAX_TOTAL) { "バックアップファイルが大きすぎます" }
         val files = linkedMapOf<String, ByteArray>()
@@ -203,7 +208,7 @@ internal object ReaderDataBackup {
         require(files.size >= 3 && files.size <= MAX_CAPTURES + 3) { "バックアップのファイル数が不正です" }
         val manifest = JSONObject(String(files["manifest.json"] ?: error("manifestがありません"), Charsets.UTF_8))
         require(manifest.optString("format") == FORMAT && manifest.optInt("schema") == 1 &&
-            manifest.optString("package") == packageName) { "対応していないバックアップ形式です" }
+            isCompatiblePackage(manifest.optString("package"), packageName)) { "対応していないバックアップ形式です" }
         val expected = manifest.getJSONObject("entries")
         val actualNames = files.keys - "manifest.json"
         require(actualNames == expected.keys().asSequence().toSet()) { "バックアップの内容が一致しません" }

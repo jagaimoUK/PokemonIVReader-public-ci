@@ -100,4 +100,12 @@ class ReaderDataBackupTest {
         catch (e: Exception) { rejected = true }
         assertTrue("A modified archive must not be accepted", rejected)
     }
+
+    @Test fun debugAndReleasePackagesCanRestoreAcrossBuildsWhileForeignPackageFails() {
+        assertTrue(ReaderDataBackup.isCompatiblePackage("com.example.pokemonivreader.debug", "com.example.pokemonivreader"))
+        assertTrue(ReaderDataBackup.isCompatiblePackage("com.example.pokemonivreader", "com.example.pokemonivreader.debug"))
+        assertTrue(ReaderDataBackup.isCompatiblePackage("com.example.pokemonivreader", "com.example.pokemonivreader"))
+        assertFalse(ReaderDataBackup.isCompatiblePackage("com.other.app", "com.example.pokemonivreader"))
+        assertFalse(ReaderDataBackup.isCompatiblePackage("com.example.pokemonivreader.other", "com.example.pokemonivreader"))
+    }
 }
