@@ -23,3 +23,11 @@ This file applies to all AI coding assistants and automation operating in this r
 - When guiding the user through physical device tests or manual operations, **do not omit subjects or objects**: explicitly state **which app** (`厳選アプリ (Web)` / `読み取りアプリ (Android)` / `Pokémon GO`), **which screen/collapsible/input/button**, and **where/what exact label or UI change indicates pass vs. block/conflict**.
 - Focus concretely on points where the user could get stuck or confuse apps/screens, rather than making every trivial step verbose.
 
+## Cross-app Mega and IV-selection design (documentation proposal, 2026-11-25)
+
+- Canonical requirements and verification plan (15 user-decided questions): Web repository `docs/mega-iv-selection-cross-app-design.md`.
+- After the Web documentation PR is merged, use the canonical **main** URL: https://github.com/jagaimoUK/pokemoniv/blob/main/docs/mega-iv-selection-cross-app-design.md
+- Before that merge, use the verified **Draft branch** URL: https://github.com/jagaimoUK/pokemoniv/blob/docs/mega-iv-cross-app-spec-20261125/docs/mega-iv-selection-cross-app-design.md
+- For IV recognition, nickname/tag automation, candidate history, Web sync, Mega CP, and relevant selection work, **read sections 2, 3, 5 and 8 of this document** and compare them with the latest code and the target PR's latest [AI-HANDOFF v1] before acting.
+- The canonical design lives in the Web repository; do not copy it and create a second drifting specification in Android. This pointer does **not** change Android repository authority or weaken existing safety gates.
+- Verify whether this pointer exists in Android `main:AGENTS.md` before claiming it is in force. The Web design document may be on `main` or only in Draft PR #131; fetch the actual referenced version. Do not claim it is automatically loaded by unrelated new sessions.
