@@ -25,7 +25,9 @@ This file applies to all AI coding assistants and automation operating in this r
 
 ## Cross-app Mega and IV-selection design (documentation proposal, 2026-11-25)
 
-- Canonical requirements and verification plan (15 user-decided questions): https://github.com/jagaimoUK/pokemoniv/blob/docs/mega-iv-cross-app-spec-20261125/docs/mega-iv-selection-cross-app-design.md
+- Canonical requirements and verification plan (15 user-decided questions): Web repository `docs/mega-iv-selection-cross-app-design.md`.
+- After the Web documentation PR is merged, use the canonical **main** URL: https://github.com/jagaimoUK/pokemoniv/blob/main/docs/mega-iv-selection-cross-app-design.md
+- Before that merge, use the verified **Draft branch** URL: https://github.com/jagaimoUK/pokemoniv/blob/docs/mega-iv-cross-app-spec-20261125/docs/mega-iv-selection-cross-app-design.md
 - For IV recognition, nickname/tag automation, candidate history, Web sync, Mega CP, and relevant selection work, **read sections 2, 3, 5 and 8 of this document** and compare them with the latest code and the target PR's latest [AI-HANDOFF v1] before acting.
 - The canonical design lives in the Web repository; do not copy it and create a second drifting specification in Android. This pointer does **not** change Android repository authority or weaken existing safety gates.
 - Until this documentation-only branch is explicitly approved and merged, the pointer is not present in the Android default branch. Do not claim that it is automatically loaded by unrelated new sessions.
