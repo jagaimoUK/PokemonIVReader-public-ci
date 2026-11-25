@@ -23,3 +23,7 @@ This file applies to all AI coding assistants and automation operating in this r
 - When guiding the user through physical device tests or manual operations, **do not omit subjects or objects**: explicitly state **which app** (`厳選アプリ (Web)` / `読み取りアプリ (Android)` / `Pokémon GO`), **which screen/collapsible/input/button**, and **where/what exact label or UI change indicates pass vs. block/conflict**.
 - Focus concretely on points where the user could get stuck or confuse apps/screens, rather than making every trivial step verbose.
 
+## Ask-question options: recommended model & thinking effort (2026-11-24)
+- Whenever presenting options to the user via `ask_question` (or equivalent task-choice prompts), explicitly state the **recommended AI model, thinking effort, and environment** for each option based on 3-axis evaluation (accuracy, speed, quota savings), using only real models in the user's plan:
+  - Codex: `GPT-6.2 Sol` (`High` / `Medium`), `Luna` (`Medium` / `Low`)
+  - Antigravity: `Gemini 4 Hydrogen` (`High` / `Medium`), `Gemini 4 Neon` (`High` / `Medium`), `Orchestrator (Neon)`, `Gemini 3.8 Flash` (`Medium` / `Low`)
