@@ -2689,11 +2689,14 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             )
             val control = GoCleanupKeyboard.Control.entries.firstOrNull { it.target == role.target }
             val templates = buttonTemplates.load(role)
-            val match = if (control != null && allowed != null)
+            val rawMatch = if (control != null && allowed != null)
                 GoKeyboardVisual.find(control, gray, allowed.map(::scaled), templates)
             else GoButtonMatcher.detect(gray, templates, blocked, region = toolbar, dense = dense)?.box
                 ?: if (contrastInvariant) GoButtonMatcher.detect(gray, templates, blocked,
                     contrastInvariant = true, region = toolbar, dense = dense)?.box else null
+            val match = if (role.target == GoLearningTarget.APPRAISAL) rawMatch?.takeIf {
+                it.cx > gray.width * .7f && it.cy > gray.height * .60f && it.cy < gray.height * .92f
+            } else rawMatch
             val box = match?.let {
                 Rect((it.left / ratio).roundToInt(), (it.top / ratio).roundToInt(),
                     (it.right / ratio).roundToInt(), (it.bottom / ratio).roundToInt())

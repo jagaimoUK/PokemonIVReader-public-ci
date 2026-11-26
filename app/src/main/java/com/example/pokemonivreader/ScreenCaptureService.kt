@@ -736,6 +736,8 @@ class ScreenCaptureService : Service() {
         readerQuickMenu?.dismiss()
         learningPopup?.dismiss()
         learningPopup = null
+        learningDialog?.dismiss()
+        learningDialog = null
         val root = shadowOverlayRoot ?: return null
         val params = overlayLayout ?: return null
         if (!root.isAttachedToWindow || root.visibility != View.VISIBLE) return null
@@ -749,11 +751,15 @@ class ScreenCaptureService : Service() {
             params.flags = flags
             return null
         }
+        var restored = false
         return {
-            params.flags = flags
-            if (shadowOverlayRoot === root && root.isAttachedToWindow && !autoReading && overlayVisible) {
-                root.visibility = View.VISIBLE
-                runCatching { manager.updateViewLayout(root, params) }
+            if (!restored) {
+                restored = true
+                params.flags = flags
+                if (shadowOverlayRoot === root && root.isAttachedToWindow && !autoReading && overlayVisible) {
+                    root.visibility = View.VISIBLE
+                    runCatching { manager.updateViewLayout(root, params) }
+                }
             }
         }
     }

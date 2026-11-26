@@ -550,6 +550,56 @@ class GoButtonLearningTest {
         ReaderOverlayVisibility.pause().invoke()
         assertEquals(1, paused)
     }
+
+    @Test fun sharedLearningMenuSkipsDetachedOrLockedHostSafely() {
+        val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+        val detached = android.view.View(activity)
+        val attached = android.view.View(activity).also { activity.setContentView(it) }
+        val menus = mutableListOf<android.widget.PopupMenu>()
+
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = detached,
+            isLocked = { false },
+            showDialog = {},
+            onStatus = {},
+            onRename = {},
+            requestLearning = { _, _, _ -> },
+            onMenuOpened = { menus += it },
+        )
+        assertTrue(menus.isEmpty())
+
+        var locked = true
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = attached,
+            isLocked = { locked },
+            showDialog = {},
+            onStatus = {},
+            onRename = {},
+            requestLearning = { _, _, _ -> },
+            onMenuOpened = { menus += it },
+        )
+        assertTrue(menus.isEmpty())
+
+        locked = false
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = attached,
+            isLocked = { locked },
+            showDialog = {},
+            onStatus = {},
+            onRename = {},
+            requestLearning = { _, _, _ -> },
+            onMenuOpened = { menus += it },
+        )
+        assertEquals(1, menus.size)
+        val rootMenu = menus.last().menu
+        locked = true
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(2).itemId, 0))
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(1, menus.size)
+    }
 }
 
 

@@ -18,6 +18,12 @@ internal object GoButtonLearningMenu {
         }
     }
 
+    private fun showPopup(popup: PopupMenu, onMenuOpened: ((PopupMenu) -> Unit)?) {
+        if (runCatching { popup.show() }.isSuccess) {
+            onMenuOpened?.invoke(popup)
+        }
+    }
+
     fun show(
         context: Context,
         anchor: View,
@@ -28,6 +34,7 @@ internal object GoButtonLearningMenu {
         requestLearning: (GoButtonTemplateStore.Role?, Int?, Boolean) -> Unit,
         onMenuOpened: ((PopupMenu) -> Unit)? = null,
     ) {
+        if (!anchor.isAttachedToWindow || isLocked()) return
         val store = GoButtonTemplateStore(context)
         val popup = PopupMenu(context, anchor).apply {
             menu.action("ボタンを囲んで登録", !isLocked()) { requestLearning(null, null, false) }
@@ -41,12 +48,12 @@ internal object GoButtonLearningMenu {
             }
             menu.action("登録済みボタン", !isLocked()) {
                 anchor.post {
-                    showLearnedRoles(context, anchor, store, onStatus, onRename, requestLearning, onMenuOpened)
+                    if (!anchor.isAttachedToWindow || isLocked()) return@post
+                    showLearnedRoles(context, anchor, store, isLocked, onStatus, onRename, requestLearning, onMenuOpened)
                 }
             }
         }
-        onMenuOpened?.invoke(popup)
-        popup.show()
+        showPopup(popup, onMenuOpened)
     }
 
     fun learnRecoveryTarget(
@@ -72,17 +79,20 @@ internal object GoButtonLearningMenu {
         context: Context,
         anchor: View,
         store: GoButtonTemplateStore,
+        isLocked: () -> Boolean,
         onStatus: (String) -> Unit,
         onRename: (GoButtonTemplateStore.Role) -> Unit,
         learn: (GoButtonTemplateStore.Role?, Int?, Boolean) -> Unit,
         onMenuOpened: ((PopupMenu) -> Unit)?,
     ) {
+        if (!anchor.isAttachedToWindow || isLocked()) return
         val popup = PopupMenu(context, anchor).apply {
             val roles = store.roles().map { it to store.count(it) }
                 .sortedByDescending { (_, count) -> count > 0 }
             for ((role, count) in roles) {
                 menu.add("${role.title}（$count 件）").setOnMenuItemClickListener {
                     anchor.post {
+                        if (!anchor.isAttachedToWindow || isLocked()) return@post
                         val detail = PopupMenu(context, anchor).apply {
                             menu.action("見本を追加", count < GoButtonTemplateStore.MAX_SAMPLES) {
                                 learn(role, null, false)
@@ -103,14 +113,12 @@ internal object GoButtonLearningMenu {
                                 onStatus(if (store.delete(role)) "役割を削除しました" else "役割を削除できませんでした")
                             }
                         }
-                        onMenuOpened?.invoke(detail)
-                        detail.show()
+                        showPopup(detail, onMenuOpened)
                     }
                     true
                 }
             }
         }
-        onMenuOpened?.invoke(popup)
-        popup.show()
+        showPopup(popup, onMenuOpened)
     }
 }
