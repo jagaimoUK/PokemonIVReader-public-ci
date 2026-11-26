@@ -53,7 +53,7 @@ class ReaderHomeLayoutTest {
         compose.onNodeWithText("自動登録データをコピー（進化先別）").assertIsDisplayed()
         assertThumbPosition()
         compose.onNodeWithTag("reader-home").performScrollToIndex(3)
-        compose.onNodeWithText("読み取り範囲").assertIsDisplayed()
+        compose.onNodeWithText("読み取り範囲").assertDoesNotExist()
         compose.onNodeWithText("見本・バックアップ").assertIsDisplayed()
         assertEquals(0, AutoIvRecords.count(context))
     }
