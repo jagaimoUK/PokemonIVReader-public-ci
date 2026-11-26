@@ -32,6 +32,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.provider.Settings
 import android.view.View
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import com.example.pokemonivreader.catchassist.CatchLiveThrow
@@ -39,7 +40,10 @@ import com.example.pokemonivreader.catchassist.CatchLocalStore
 import com.example.pokemonivreader.catchassist.CatchPointerCrosshair
 import com.example.pokemonivreader.catchassist.CatchThrowExample
 import com.example.pokemonivreader.catchassist.CatchThrowRange
+import com.example.pokemonivreader.overlayqueue.GoButtonLearningMenu
+import com.example.pokemonivreader.overlayqueue.GoButtonTemplateStore
 import com.example.pokemonivreader.overlayqueue.GoTextInputAccessibilityService
+import com.example.pokemonivreader.overlayqueue.ReaderOverlayVisibility
 import com.example.pokemonivreader.readerquickmenu.ReaderQuickMenuPopup
 import java.io.File
 import java.io.FileOutputStream
@@ -133,6 +137,9 @@ class ScreenCaptureService : Service() {
     private var overlay: TextView? = null
     private var shadowOverlayRoot: android.widget.LinearLayout? = null
     private var readerQuickMenu: ReaderQuickMenuPopup? = null
+    private var learningPopup: PopupMenu? = null
+    private var learningDialog: AlertDialog? = null
+    private var learningRequestGeneration = 0
     @Volatile private var activeShadowMode = ShadowRecognizer.Mode.AUTO
     private var overlayLayout: WindowManager.LayoutParams? = null
     @Volatile private var captureByOverlay = false
@@ -458,6 +465,7 @@ class ScreenCaptureService : Service() {
                     else -> "実投球を記録" to ::startLiveThrow
                 }
             },
+            learnButtons = ::openButtonLearning,
         )
         val shadowRoot = ReaderShadowControls.wrap(this, button) { trigger ->
             quickMenu.toggle(trigger)
@@ -502,6 +510,7 @@ class ScreenCaptureService : Service() {
             overlayVisible = true
             overlay = button
             overlayLayout = params
+            ReaderOverlayVisibility.register(::pauseReaderOverlayForLearning)
         } catch (e: Exception) {
             updateNotification("フロート表示失敗。許可を確認してください")
         }
@@ -668,12 +677,96 @@ class ScreenCaptureService : Service() {
         }
     }
 
+    private fun isLearningBusy(): Boolean =
+        hasStopped || !overlayVisible || throwRecording != null || autoReading || scheduled ||
+            capturePending.get() || scanInProgress.get() || pipeline.size() != 0 || appraisalReview.isShowing
+
+    private fun showLearningFeedback(message: String) {
+        main.post { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
+    }
+
+    private fun showLearningDialog(dialog: AlertDialog) {
+        learningDialog?.dismiss()
+        learningDialog = dialog
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        dialog.setOnDismissListener { if (learningDialog === dialog) learningDialog = null }
+        if (runCatching { dialog.show() }.isFailure) learningDialog = null
+    }
+
+    private fun openButtonLearning(anchor: View) {
+        if (isLearningBusy()) {
+            Toast.makeText(this, "読み取りや確認を終えてから学習を開いてください", Toast.LENGTH_SHORT).show()
+            return
+        }
+        anchor.post {
+            if (isLearningBusy() || !anchor.isAttachedToWindow) return@post
+            GoButtonLearningMenu.show(
+                context = this,
+                anchor = anchor,
+                isLocked = ::isLearningBusy,
+                showDialog = ::showLearningDialog,
+                onStatus = ::showLearningFeedback,
+                onRename = { role ->
+                    if (!GoTextInputAccessibilityService.renameLearned(role, ::showLearningFeedback)) {
+                        showLearningFeedback("Androidのユーザー補助で「厳選テキスト入力」を有効にしてください")
+                    }
+                },
+                requestLearning = ::requestButtonLearning,
+                onMenuOpened = { popup ->
+                    if (learningPopup !== popup) learningPopup?.dismiss()
+                    learningPopup = popup
+                },
+            )
+        }
+    }
+
+    private fun requestButtonLearning(role: GoButtonTemplateStore.Role? = null, replace: Int? = null,
+                                      preview: Boolean = false) {
+        val requestId = ++learningRequestGeneration
+        main.postDelayed({
+            if (requestId != learningRequestGeneration || isLearningBusy()) return@postDelayed
+            if (!GoTextInputAccessibilityService.learn(role, replace, preview, ::showLearningFeedback)) {
+                showLearningFeedback("Androidのユーザー補助で「厳選テキスト入力」を有効にしてください")
+            }
+        }, 250L)
+    }
+
+    private fun pauseReaderOverlayForLearning(): (() -> Unit)? {
+        readerQuickMenu?.dismiss()
+        learningPopup?.dismiss()
+        learningPopup = null
+        val root = shadowOverlayRoot ?: return null
+        val params = overlayLayout ?: return null
+        if (!root.isAttachedToWindow || root.visibility != View.VISIBLE) return null
+        val manager = getSystemService(WindowManager::class.java) ?: return null
+        val flags = params.flags
+        params.flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        try {
+            manager.updateViewLayout(root, params)
+            root.visibility = View.INVISIBLE
+        } catch (_: Exception) {
+            params.flags = flags
+            return null
+        }
+        return {
+            params.flags = flags
+            if (shadowOverlayRoot === root && root.isAttachedToWindow && !autoReading && overlayVisible) {
+                root.visibility = View.VISIBLE
+                runCatching { manager.updateViewLayout(root, params) }
+            }
+        }
+    }
+
     /** One tap: capture immediately without removing or hiding the floating button. */
     @Synchronized private fun requestOverlayCapture(automatic: AutoCapture? = null) {
         fun rejected(message: String) {
             automatic?.done?.invoke(OverlayIvProcessor.Outcome(message, false))
         }
         readerQuickMenu?.dismiss() // Menu must never cover IV/CP frames.
+        learningRequestGeneration++
+        learningPopup?.dismiss(); learningPopup = null
+        learningDialog?.dismiss(); learningDialog = null
         if (GoTextInputAccessibilityService.isCatchTrialRunning()) {
             Toast.makeText(this, "捕獲をオフにしてから読み取ってください", Toast.LENGTH_SHORT).show()
             rejected("クイック捕獲中")
@@ -923,6 +1016,10 @@ class ScreenCaptureService : Service() {
     }
 
     private fun removeOverlay() {
+        ReaderOverlayVisibility.register(null)
+        learningRequestGeneration++
+        learningPopup?.dismiss(); learningPopup = null
+        learningDialog?.dismiss(); learningDialog = null
         cancelLiveThrow()
         throwDialog?.dismiss()
         clearRecordedThrow()

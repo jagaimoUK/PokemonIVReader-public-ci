@@ -143,8 +143,9 @@ internal class GoButtonLearningOverlay(
         val frame = FrameLayout(context).apply { setBackgroundColor(Color.BLACK) }
         frame.addView(picture, FrameLayout.LayoutParams(-1, -1))
         val toolsAtTop = initialRole?.target?.keyboardControl == true ||
-            initialRole?.target in setOf(GoLearningTarget.DETAIL_CLOSE, GoLearningTarget.BULK_TAG,
-            GoLearningTarget.TAG_DONE, GoLearningTarget.NAME_OK)
+            initialRole?.target in setOf(GoLearningTarget.DETAIL_CLOSE, GoLearningTarget.DETAIL_MENU,
+            GoLearningTarget.APPRAISAL, GoLearningTarget.BULK_TAG, GoLearningTarget.TAG_DONE,
+            GoLearningTarget.NAME_OK)
         val guidance = TextView(context).apply {
             text = if (preview != null) "${initialRole?.title} を検出しました"
                 else initialRole?.target?.instruction ?: "対象を中心に、周りの余白を含めて囲めます"

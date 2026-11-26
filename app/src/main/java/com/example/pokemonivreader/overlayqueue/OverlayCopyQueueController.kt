@@ -1124,20 +1124,19 @@ class OverlayCopyQueueController private constructor(private val app: Context) {
     }
 
     private fun showLearningMenu(anchor: View) {
-        val store = GoButtonTemplateStore(app)
-        PopupMenu(app, anchor).apply {
-            menu.action("ボタンを囲んで登録", !controlsLocked) { requestLearning() }
-            menu.addSubMenu("キーボード操作を学習").apply {
-                GoCleanupKeyboard.Control.entries.forEach { control ->
-                    val role = store.role(control.target)
-                    action(role.title, !controlsLocked) { learnRecoveryTarget(control.target) }
+        GoButtonLearningMenu.show(
+            context = app,
+            anchor = anchor,
+            isLocked = { controlsLocked },
+            showDialog = ::showRecoveryDialog,
+            onStatus = ::setInputStatus,
+            onRename = { role ->
+                if (!GoTextInputAccessibilityService.renameLearned(role)) {
+                    setInputStatus("Androidのユーザー補助で「厳選テキスト入力」を有効にしてください")
                 }
-            }
-            menu.action("登録済みボタン", !controlsLocked) {
-                anchor.post { showLearnedRoles(anchor, store, ::requestLearning) }
-            }
-            show()
-        }
+            },
+            requestLearning = ::requestLearning,
+        )
     }
 
     private fun showRecoveryDialog(dialog: AlertDialog) {
@@ -1221,13 +1220,7 @@ class OverlayCopyQueueController private constructor(private val app: Context) {
     }
 
     private fun learnRecoveryTarget(target: GoLearningTarget) {
-        val store = GoButtonTemplateStore(app)
-        val role = store.role(target)
-        val count = store.count(role)
-        if (count < GoButtonTemplateStore.MAX_SAMPLES) requestLearning(role)
-        else showRecoveryDialog(AlertDialog.Builder(app).setTitle("置き換える見本")
-            .setItems(Array(count) { "見本 ${it + 1} を再学習" }) { _, index -> requestLearning(role, index) }
-            .setNegativeButton("閉じる", null).create())
+        GoButtonLearningMenu.learnRecoveryTarget(app, target, ::showRecoveryDialog, ::requestLearning)
     }
 
     private fun openAutomationLog() {
@@ -1236,36 +1229,6 @@ class OverlayCopyQueueController private constructor(private val app: Context) {
             stopInput()
             app.startActivity(android.content.Intent(app, GoAutomationLogActivity::class.java)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
-    }
-
-    private fun showLearnedRoles(anchor: View, store: GoButtonTemplateStore,
-                                 learn: (GoButtonTemplateStore.Role, Int?, Boolean) -> Unit) {
-        PopupMenu(app, anchor).apply {
-            val roles = store.roles().map { it to store.count(it) }.sortedByDescending { (_, count) -> count > 0 }
-            for ((role, count) in roles) {
-                menu.add("${role.title}（$count 件）").setOnMenuItemClickListener {
-                    anchor.post {
-                        PopupMenu(app, anchor).apply {
-                            menu.action("見本を追加", count < GoButtonTemplateStore.MAX_SAMPLES) { learn(role, null, false) }
-                            menu.action("現在の画面で照合", store.load(role).isNotEmpty()) { learn(role, null, true) }
-                            menu.action("役割名を変更", true) { GoTextInputAccessibilityService.renameLearned(role) }
-                            repeat(count) { index ->
-                                menu.action("見本 ${index + 1} を再学習", true) { learn(role, index, false) }
-                                menu.action("見本 ${index + 1} を削除", true) {
-                                    setInputStatus(if (store.delete(role, index)) "見本を削除しました" else "見本を削除できませんでした")
-                                }
-                            }
-                            if (role.target == null) menu.action("役割を削除", true) {
-                                setInputStatus(if (store.delete(role)) "役割を削除しました" else "役割を削除できませんでした")
-                            }
-                            show()
-                        }
-                    }
-                    true
-                }
-            }
-            show()
         }
     }
 

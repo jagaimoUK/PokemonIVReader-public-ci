@@ -17,6 +17,8 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
     NAME_OK("OK／決定のボタンを、周りの余白を含めて囲めます", setOf("ok", "決定", "はい")),
     FAVORITE_STAR("詳細画面の右上にある黄色い星を囲みます"),
     DETAIL_CLOSE("個体の詳細画面の下中央にある × を囲みます"),
+    DETAIL_MENU("詳細画面の右下にあるメニュー（≡）を囲みます"),
+    APPRAISAL("個体メニュー右下の評価（リボン）アイコンを囲みます"),
     TAG_MENU("個体メニューの TAG／タグ の文字を囲みます", setOf("tag", "タグ")),
     BULK_TAG("複数選択画面の TAG の文字を囲みます。件数や周りの余白を含められます", setOf("tag", "タグ")),
     PREV("タグ選択画面で prev の文字を囲みます", setOf("prev")),
@@ -35,6 +37,8 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
         NAME_OK -> "名前変更の OK"
         FAVORITE_STAR -> "お気に入りの星"
         DETAIL_CLOSE -> "詳細画面の ×"
+        DETAIL_MENU -> "詳細画面のメニュー"
+        APPRAISAL -> "評価ボタン（リボン）"
         TAG_MENU -> "個体メニューの TAG"
         BULK_TAG -> "複数選択の TAG"
         PREV -> "タグ一覧の prev"

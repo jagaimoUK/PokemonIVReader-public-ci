@@ -92,5 +92,31 @@ class ReaderOverlayUsabilityTest {
         toggle.isChecked=false
         assertEquals(green,(root.background as GradientDrawable).color!!.defaultColor)
     }
+
+    @Test fun quickMenuExposesButtonLearningFromReadingOverlay() {
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true)
+        val anchor = TextView(activity)
+        activity.setContentView(anchor)
+        var clickedAnchor: android.view.View? = null
+        val popup = com.example.pokemonivreader.readerquickmenu.ReaderQuickMenuPopup(
+            activity,
+            learnButtons = { clickedAnchor = it },
+        )
+        try {
+            popup.toggle(anchor)
+            assertTrue(popup.isShowing)
+            val contentField = popup.javaClass.getDeclaredField("content").apply { isAccessible = true }
+            val menuView = contentField.get(popup) as android.view.ViewGroup
+            fun findTextViews(v: android.view.View): List<TextView> =
+                (if (v is TextView) listOf(v) else emptyList()) +
+                    if (v is android.view.ViewGroup) (0 until v.childCount).flatMap { findTextViews(v.getChildAt(it)) } else emptyList()
+            val learnButton = findTextViews(menuView).single { it.text.toString() == "ボタンを学習" }
+            learnButton.performClick()
+            assertFalse(popup.isShowing)
+            assertSame(anchor, clickedAnchor)
+        } finally {
+            popup.destroy()
+        }
+    }
 }
 
