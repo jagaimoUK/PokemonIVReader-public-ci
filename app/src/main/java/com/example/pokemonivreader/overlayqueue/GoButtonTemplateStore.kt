@@ -19,6 +19,7 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
     DETAIL_CLOSE("個体の詳細画面の下中央にある × を囲みます"),
     DETAIL_MENU("詳細画面の右下にあるメニュー（≡）を囲みます"),
     APPRAISAL("個体メニュー右下の評価（リボン）アイコンを囲みます"),
+    APPRAISAL_PANEL("個体値評価パネルの左上から右下まで全体を囲みます"),
     TAG_MENU("個体メニューの TAG／タグ の文字を囲みます", setOf("tag", "タグ")),
     BULK_TAG("複数選択画面の TAG の文字を囲みます。件数や周りの余白を含められます", setOf("tag", "タグ")),
     PREV("タグ選択画面で prev の文字を囲みます", setOf("prev")),
@@ -39,6 +40,7 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
         DETAIL_CLOSE -> "詳細画面の ×"
         DETAIL_MENU -> "詳細画面のメニュー"
         APPRAISAL -> "評価ボタン（リボン）"
+        APPRAISAL_PANEL -> "評価パネル"
         TAG_MENU -> "個体メニューの TAG"
         BULK_TAG -> "複数選択の TAG"
         PREV -> "タグ一覧の prev"
@@ -80,7 +82,41 @@ internal class GoButtonTemplateStore(
     fun custom(label: String, screen: String): Role =
         Role("custom_${java.util.UUID.randomUUID()}", label.trim(), screen.trim())
 
-    fun count(role: Role) = decode(prefs.getString(role.id, null)).size
+    fun count(role: Role): Int =
+        if (role.target == GoLearningTarget.APPRAISAL_PANEL) (if (hasAppraisalPanel()) 1 else 0)
+        else decode(prefs.getString(role.id, null)).size
+
+    fun hasAppraisalPanel(): Boolean {
+        val raw = context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+            .getString("crop_template_v1", null) ?: return false
+        return try {
+            val cfg = JSONObject(raw)
+            val coords = listOf("x1", "y1", "x2", "y2").map { cfg.optDouble(it, Double.NaN) }
+            val aspect = cfg.optDouble("aspect", Double.NaN)
+            coords.all { it.isFinite() && it in 0.0..1.0 } && aspect.isFinite() && aspect > 0.0
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun saveAppraisalPanel(bounds: Rect, imageWidth: Int, imageHeight: Int): Boolean {
+        if (imageWidth <= 0 || imageHeight <= 0) return false
+        if (bounds.left < 0 || bounds.top < 0 || bounds.right > imageWidth || bounds.bottom > imageHeight) return false
+        if (bounds.width() < 100 || bounds.height() < 100) return false
+        val json = JSONObject().apply {
+            put("x1", bounds.left.toDouble() / imageWidth)
+            put("y1", bounds.top.toDouble() / imageHeight)
+            put("x2", bounds.right.toDouble() / imageWidth)
+            put("y2", bounds.bottom.toDouble() / imageHeight)
+            put("aspect", imageWidth.toDouble() / imageHeight)
+        }
+        return context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+            .edit().putString("crop_template_v1", json.toString()).commit()
+    }
+
+    fun clearAppraisalPanel(): Boolean =
+        context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+            .edit().remove("crop_template_v1").commit()
 
     fun rename(role: Role, label: String): Boolean =
         validLabel(label) && prefs.edit().putString("label:${role.id}", label.trim()).commit()

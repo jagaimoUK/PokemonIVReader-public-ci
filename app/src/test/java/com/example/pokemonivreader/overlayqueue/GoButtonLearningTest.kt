@@ -506,13 +506,13 @@ class GoButtonLearningTest {
         )
         val rootMenu = menus.last().menu
         assertEquals(
-            listOf("ボタンを囲んで登録", "キーボード操作を学習", "登録済みボタン"),
+            listOf("ボタンを囲んで登録", "評価パネルの範囲を学習", "キーボード操作を学習", "登録済みボタン"),
             (0 until rootMenu.size()).map { rootMenu.getItem(it).title.toString() }
         )
         assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(0).itemId, 0))
         assertEquals(listOf(Triple(null, null, false)), requests)
 
-        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(2).itemId, 0))
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(3).itemId, 0))
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         val rolesMenu = menus.last().menu
         val appraisalIndex = (0 until rolesMenu.size()).first {
@@ -596,9 +596,94 @@ class GoButtonLearningTest {
         assertEquals(1, menus.size)
         val rootMenu = menus.last().menu
         locked = true
-        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(2).itemId, 0))
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(3).itemId, 0))
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         assertEquals(1, menus.size)
+    }
+
+    @Test fun appraisalPanelLearningSavesCropTemplateAndAppearsInRoleCandidatesAndMenu() {
+        val store = GoButtonTemplateStore(context)
+        assertTrue(store.roles().any { it.id == GoLearningTarget.APPRAISAL_PANEL.name && it.label == "評価パネル" })
+        assertFalse(store.hasAppraisalPanel())
+        assertEquals(0, store.count(store.role(GoLearningTarget.APPRAISAL_PANEL)))
+
+        val bitmap = android.graphics.Bitmap.createBitmap(1080, 2400, android.graphics.Bitmap.Config.ARGB_8888)
+        var finishedMessage: String? = null
+        val overlay = GoButtonLearningOverlay(
+            context, bitmap, null, null, emptyList(),
+            readLabel = { _, _, _ -> },
+            finished = { finishedMessage = it },
+        )
+        overlay.show()
+        try {
+            val root = overlay.javaClass.getDeclaredField("root").apply { isAccessible = true }
+                .get(overlay) as android.view.ViewGroup
+            fun findButtons(v: android.view.View): List<android.widget.Button> =
+                (if (v is android.widget.Button) listOf(v) else emptyList()) +
+                    if (v is android.view.ViewGroup) (0 until v.childCount).flatMap { findButtons(v.getChildAt(it)) } else emptyList()
+
+            findButtons(root).single { it.text.toString() == "役割を選ぶ" }.performClick()
+            val panelChoice = findButtons(root).single { it.text.toString() == "評価パネル" }
+            panelChoice.performClick()
+
+            val selectionField = overlay.javaClass.getDeclaredField("selection").apply { isAccessible = true }
+            selectionField.set(overlay, android.graphics.Rect(100, 1200, 150, 1250))
+            findButtons(root).single { it.text.toString() == "保存" }.performClick()
+            assertFalse(store.hasAppraisalPanel())
+            assertNull(finishedMessage)
+
+            selectionField.set(overlay, android.graphics.Rect(108, 1200, 864, 1920))
+            findButtons(root).single { it.text.toString() == "保存" }.performClick()
+        } finally {
+            overlay.close()
+        }
+        assertEquals("保存しました。 評価パネル", finishedMessage)
+        assertTrue(store.hasAppraisalPanel())
+        assertEquals(1, store.count(store.role(GoLearningTarget.APPRAISAL_PANEL)))
+
+        val saved = org.json.JSONObject(
+            context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+                .getString("crop_template_v1", "")!!
+        )
+        assertEquals(0.1, saved.getDouble("x1"), 1e-4)
+        assertEquals(0.5, saved.getDouble("y1"), 1e-4)
+        assertEquals(0.8, saved.getDouble("x2"), 1e-4)
+        assertEquals(0.8, saved.getDouble("y2"), 1e-4)
+        assertEquals(1080.0 / 2400.0, saved.getDouble("aspect"), 1e-4)
+
+        val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+        val anchor = android.view.View(activity).also { activity.setContentView(it) }
+        val menus = mutableListOf<android.widget.PopupMenu>()
+        val requests = mutableListOf<Triple<GoButtonTemplateStore.Role?, Int?, Boolean>>()
+        val statuses = mutableListOf<String>()
+
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = anchor,
+            isLocked = { false },
+            showDialog = {},
+            onStatus = { statuses += it },
+            onRename = {},
+            requestLearning = { role, replace, preview -> requests += Triple(role, replace, preview) },
+            onMenuOpened = { menus += it },
+        )
+        val rootMenu = menus.last().menu
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(1).itemId, 0))
+        assertEquals(listOf(Triple(store.role(GoLearningTarget.APPRAISAL_PANEL), null, false)), requests)
+
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(3).itemId, 0))
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        val rolesMenu = menus.last().menu
+        val panelIndex = (0 until rolesMenu.size()).first {
+            rolesMenu.getItem(it).title.toString() == "評価パネル（1 件）"
+        }
+        assertTrue(rolesMenu.performIdentifierAction(rolesMenu.getItem(panelIndex).itemId, 0))
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        val detailMenu = menus.last().menu
+        assertEquals(listOf("範囲を設定", "範囲を削除"), (0 until detailMenu.size()).map { detailMenu.getItem(it).title.toString() })
+        assertTrue(detailMenu.performIdentifierAction(detailMenu.getItem(1).itemId, 0))
+        assertEquals(listOf("評価パネルの範囲を削除しました"), statuses)
+        assertFalse(store.hasAppraisalPanel())
     }
 }
 

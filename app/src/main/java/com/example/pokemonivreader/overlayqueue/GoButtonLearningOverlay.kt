@@ -144,8 +144,8 @@ internal class GoButtonLearningOverlay(
         frame.addView(picture, FrameLayout.LayoutParams(-1, -1))
         val toolsAtTop = initialRole?.target?.keyboardControl == true ||
             initialRole?.target in setOf(GoLearningTarget.DETAIL_CLOSE, GoLearningTarget.DETAIL_MENU,
-            GoLearningTarget.APPRAISAL, GoLearningTarget.BULK_TAG, GoLearningTarget.TAG_DONE,
-            GoLearningTarget.NAME_OK)
+            GoLearningTarget.APPRAISAL, GoLearningTarget.APPRAISAL_PANEL, GoLearningTarget.BULK_TAG,
+            GoLearningTarget.TAG_DONE, GoLearningTarget.NAME_OK)
         val guidance = TextView(context).apply {
             text = if (preview != null) "${initialRole?.title} を検出しました"
                 else initialRole?.target?.instruction ?: "対象を中心に、周りの余白を含めて囲めます"
@@ -231,6 +231,22 @@ internal class GoButtonLearningOverlay(
     private fun save(role: GoButtonTemplateStore.Role, bounds: Rect) {
         if (closed || checkingLabel) return
         val target = role.target
+        if (target == GoLearningTarget.APPRAISAL_PANEL) {
+            if (excluded.any { Rect.intersects(it, bounds) }) {
+                showStatus("キーボードを避けて枠を指定してください")
+                return
+            }
+            if (bounds.width() < 100 || bounds.height() < 100) {
+                showStatus("範囲を広めに指定してください（評価パネル全体を囲んでください）")
+                return
+            }
+            if (store.saveAppraisalPanel(bounds, bitmap.width, bitmap.height)) {
+                close("保存しました。 ${role.title}")
+            } else {
+                showStatus("保存できませんでした。範囲を調整してください")
+            }
+            return
+        }
         fun persist(region: Rect) {
             if (allowed != null && allowed.none { it.contains(region) }) {
                 showStatus("表示されたキーの範囲内で、キーだけを囲んでください")
