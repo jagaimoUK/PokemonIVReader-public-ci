@@ -443,6 +443,163 @@ class GoButtonLearningTest {
         }
         assertEquals(1, targetStore.load(search).size)
     }
+
+    @Test fun detailMenuAndAppraisalTargetsPersistExportAndPlaceToolsAtTop() {
+        val menuSample = fake(24, 24, .92f, 81)
+        val appraisalSample = fake(41, 40, .84f, 82)
+        val plain = GoButtonTemplateStore(context)
+        assertTrue(plain.save(GoLearningTarget.DETAIL_MENU, menuSample))
+        assertTrue(plain.save(GoLearningTarget.APPRAISAL, appraisalSample))
+
+        val reopened = GoButtonTemplateStore(context)
+        assertEquals(1, reopened.load(GoLearningTarget.DETAIL_MENU).size)
+        assertEquals(1, reopened.load(GoLearningTarget.APPRAISAL).size)
+        assertTrue(reopened.roles().any { it.id == GoLearningTarget.DETAIL_MENU.name && it.label == "詳細画面のメニュー" })
+        assertTrue(reopened.roles().any { it.id == GoLearningTarget.APPRAISAL.name && it.label == "評価ボタン（リボン）" })
+
+        val exported = reopened.exportTemplatesJson()
+        val prefs = context.getSharedPreferences("go_button_templates_v1", Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val imported = GoButtonTemplateStore(context).importTemplatesJson(exported)
+        assertEquals(2, imported.importedRoles)
+        assertEquals(1, GoButtonTemplateStore(context).load(GoLearningTarget.DETAIL_MENU).size)
+        assertEquals(1, GoButtonTemplateStore(context).load(GoLearningTarget.APPRAISAL).size)
+
+        for (target in listOf(GoLearningTarget.DETAIL_MENU, GoLearningTarget.APPRAISAL)) {
+            val bitmap = android.graphics.Bitmap.createBitmap(320, 640, android.graphics.Bitmap.Config.ARGB_8888)
+            val overlay = GoButtonLearningOverlay(
+                context, bitmap, reopened.role(target), null, emptyList(),
+                readLabel = { _, _, _ -> }, finished = {}
+            )
+            overlay.show()
+            try {
+                val root = overlay.javaClass.getDeclaredField("root").apply { isAccessible = true }
+                    .get(overlay) as android.view.ViewGroup
+                val panel = (0 until root.childCount).map { root.getChildAt(it) }
+                    .first { it is android.widget.LinearLayout }
+                val lp = panel.layoutParams as android.widget.FrameLayout.LayoutParams
+                assertEquals(android.view.Gravity.TOP, lp.gravity)
+            } finally {
+                overlay.close()
+            }
+        }
+    }
+
+    @Test fun sharedLearningMenuOperatesWithoutSearchOverlayAndSupportsAppraisalRoles() {
+        val plain = GoButtonTemplateStore(context)
+        assertTrue(plain.save(GoLearningTarget.APPRAISAL, fake(41, 40, .84f, 91)))
+        val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+        val anchor = android.view.View(activity).also { activity.setContentView(it) }
+        val menus = mutableListOf<android.widget.PopupMenu>()
+        val requests = mutableListOf<Triple<GoButtonTemplateStore.Role?, Int?, Boolean>>()
+        val statuses = mutableListOf<String>()
+
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = anchor,
+            isLocked = { false },
+            showDialog = {},
+            onStatus = { statuses += it },
+            onRename = {},
+            requestLearning = { role, replace, preview -> requests += Triple(role, replace, preview) },
+            onMenuOpened = { menus += it },
+        )
+        val rootMenu = menus.last().menu
+        assertEquals(
+            listOf("ボタンを囲んで登録", "キーボード操作を学習", "登録済みボタン"),
+            (0 until rootMenu.size()).map { rootMenu.getItem(it).title.toString() }
+        )
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(0).itemId, 0))
+        assertEquals(listOf(Triple(null, null, false)), requests)
+
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(2).itemId, 0))
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        val rolesMenu = menus.last().menu
+        val appraisalIndex = (0 until rolesMenu.size()).first {
+            rolesMenu.getItem(it).title.toString().startsWith("評価ボタン（リボン）（1 件）")
+        }
+        assertTrue(rolesMenu.performIdentifierAction(rolesMenu.getItem(appraisalIndex).itemId, 0))
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        val detailMenu = menus.last().menu
+        val deleteIndex = (0 until detailMenu.size()).first {
+            detailMenu.getItem(it).title.toString() == "見本 1 を削除"
+        }
+        assertTrue(detailMenu.performIdentifierAction(detailMenu.getItem(deleteIndex).itemId, 0))
+        assertEquals(listOf("見本を削除しました"), statuses)
+        assertEquals(0, GoButtonTemplateStore(context).count(plain.role(GoLearningTarget.APPRAISAL)))
+    }
+
+    @Test fun readerOverlayVisibilityPausesAndRestoresRegisteredHandlerSafely() {
+        ReaderOverlayVisibility.register(null)
+        ReaderOverlayVisibility.pause().invoke()
+
+        var paused = 0
+        var restored = 0
+        ReaderOverlayVisibility.register {
+            paused++
+            { restored++ }
+        }
+        val restore = ReaderOverlayVisibility.pause()
+        assertEquals(1, paused)
+        assertEquals(0, restored)
+        restore()
+        assertEquals(1, restored)
+
+        ReaderOverlayVisibility.register(null)
+        ReaderOverlayVisibility.pause().invoke()
+        assertEquals(1, paused)
+    }
+
+    @Test fun sharedLearningMenuSkipsDetachedOrLockedHostSafely() {
+        val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+        val detached = android.view.View(activity)
+        val attached = android.view.View(activity).also { activity.setContentView(it) }
+        val menus = mutableListOf<android.widget.PopupMenu>()
+
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = detached,
+            isLocked = { false },
+            showDialog = {},
+            onStatus = {},
+            onRename = {},
+            requestLearning = { _, _, _ -> },
+            onMenuOpened = { menus += it },
+        )
+        assertTrue(menus.isEmpty())
+
+        var locked = true
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = attached,
+            isLocked = { locked },
+            showDialog = {},
+            onStatus = {},
+            onRename = {},
+            requestLearning = { _, _, _ -> },
+            onMenuOpened = { menus += it },
+        )
+        assertTrue(menus.isEmpty())
+
+        locked = false
+        GoButtonLearningMenu.show(
+            context = activity,
+            anchor = attached,
+            isLocked = { locked },
+            showDialog = {},
+            onStatus = {},
+            onRename = {},
+            requestLearning = { _, _, _ -> },
+            onMenuOpened = { menus += it },
+        )
+        assertEquals(1, menus.size)
+        val rootMenu = menus.last().menu
+        locked = true
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(2).itemId, 0))
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(1, menus.size)
+    }
 }
 
 

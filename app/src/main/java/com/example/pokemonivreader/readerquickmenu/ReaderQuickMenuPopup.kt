@@ -37,6 +37,7 @@ internal class ReaderQuickMenuPopup(
     private val setCatchEnabled: ((Boolean) -> Unit)? = null,
     private val teachCatchSample: (() -> Unit)? = null,
     private val liveThrow: (() -> Pair<String, () -> Unit>)? = null,
+    private val learnButtons: ((View) -> Unit)? = null,
 ) {
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val cleanup = ReaderCleanupStore(context)
@@ -189,6 +190,12 @@ internal class ReaderQuickMenuPopup(
             else if(state.pending()!=null)com.example.pokemonivreader.ReaderWebTransfer.automate(context,true)
             else resumeAutomation.invoke()
         },LinearLayout.LayoutParams(-1,dp(48)).apply{topMargin=dp(7)})
+        if (learnButtons != null) root.addView(textButton("ボタンを学習") {
+            dismiss()
+            learnButtons.invoke(anchor)
+        }.apply {
+            contentDescription = "GOのボタンと評価画面のボタンを学習"
+        }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
         // Always actionable, including the first use with no imported data.
         val copy = textButton("非厳選を取得・コピー") { fetchAndCopy() }
         root.addView(copy, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(7) })
@@ -223,7 +230,8 @@ internal class ReaderQuickMenuPopup(
         val screenHeight = context.resources.displayMetrics.heightPixels
         val width = dp(224).coerceAtMost(screenWidth)
         val approxHeight = dp((if (automation != null) 550 else if (autoRead != null) 435 else 340) +
-            (if (setCatchEnabled != null) 55 else 0) + (if (teachCatchSample != null) 55 else 0) + (if (liveThrow != null) 55 else 0))
+            (if (setCatchEnabled != null) 55 else 0) + (if (teachCatchSample != null) 55 else 0) + (if (liveThrow != null) 55 else 0) +
+            (if (learnButtons != null) 55 else 0))
         val x = (location[0] + anchor.width - width).coerceIn(0, (screenWidth - width).coerceAtLeast(0))
         val y = (location[1] + anchor.height + dp(4)).let {
             if (it + approxHeight <= screenHeight) it

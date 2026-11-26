@@ -125,24 +125,28 @@ class GoTextInputAccessibilityService : AccessibilityService() {
         }
 
         internal fun learn(role: GoButtonTemplateStore.Role? = null, replacement: Int? = null,
-                           preview: Boolean = false): Boolean {
+                           preview: Boolean = false, onFeedback: ((String) -> Unit)? = null): Boolean {
             val service = active ?: return false
-            service.startLearning(role, replacement, preview)
+            service.startLearning(role, replacement, preview, onFeedback)
             return true
         }
         internal fun hasStoppedKeyboardFrame(): Boolean = active?.hasRecentStoppedKeyboardFrame() == true
         internal fun learnStoppedKeyboard(role: GoButtonTemplateStore.Role, replacement: Int? = null): Boolean =
             active?.startStoppedKeyboardLearning(role, replacement) == true
 
-        internal fun renameLearned(role: GoButtonTemplateStore.Role) {
-            val service = active ?: return
+        internal fun renameLearned(role: GoButtonTemplateStore.Role, onFeedback: ((String) -> Unit)? = null): Boolean {
+            val service = active ?: return false
+            val report: (String) -> Unit = { message ->
+                onFeedback?.invoke(message) ?: OverlayCopyQueueController.showInputHint(message)
+            }
             service.learningNameDialog?.dismiss()
             service.learningNameDialog = GoButtonLearningOverlay.promptName(service, "役割名を変更",
-                role.label, includeScreen = false, onError = OverlayCopyQueueController::showInputHint) { name, _ ->
+                role.label, includeScreen = false, onError = report) { name, _ ->
                 val message = if (service.buttonTemplates.rename(role, name)) "役割名を保存しました。 ${name.trim()}"
                     else "役割名を保存できませんでした"
-                OverlayCopyQueueController.showInputHint(message)
+                report(message)
             }
+            return true
         }
 
         internal fun requestCleanupSearch(value: String, result: (Boolean, String) -> Unit): Boolean {
@@ -699,7 +703,16 @@ class GoTextInputAccessibilityService : AccessibilityService() {
         }
     }.getOrNull()
 
-    private val visualSession by lazy { GoVisibilitySession { OverlayCopyQueueController.pauseVisualOverlay(persistent=true) } }
+    private val visualSession by lazy {
+        GoVisibilitySession {
+            val search = OverlayCopyQueueController.pauseVisualOverlay(persistent = true)
+            val reader = ReaderOverlayVisibility.pause()
+            return@GoVisibilitySession {
+                reader()
+                search()
+            }
+        }
+    }
     private val stopControl by lazy { GoAutomationStopOverlay(this) { cancelRequest(USER_STOP) } }
     private fun holdVisualOverlay(): Boolean {
         if(visualSession.active) return false
@@ -2564,18 +2577,22 @@ class GoTextInputAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun startLearning(role: GoButtonTemplateStore.Role?, replacement: Int?, preview: Boolean) {
+    private fun startLearning(role: GoButtonTemplateStore.Role?, replacement: Int?, preview: Boolean,
+                              onFeedback: ((String) -> Unit)? = null) {
+        fun reportHint(message: String) {
+            onFeedback?.invoke(message) ?: OverlayCopyQueueController.showInputHint(message)
+        }
         cancelRequest("ボタンの学習に切り替えました")
         clearStoppedKeyboardFrame()
         if (Build.VERSION.SDK_INT < 30) {
-            OverlayCopyQueueController.showInputHint("ボタンの画像学習はAndroid 11以降に対応しています"); return
+            reportHint("ボタンの画像学習はAndroid 11以降に対応しています"); return
         }
         if (!gameInForeground()) {
-            OverlayCopyQueueController.showInputHint("GOで覚えたいボタンを表示してください"); return
+            reportHint("GOで覚えたいボタンを表示してください"); return
         }
         val control = GoCleanupKeyboard.Control.entries.firstOrNull { it.target == role?.target }
         if (control != null && cleanupImeVisibility() != true) {
-            OverlayCopyQueueController.showInputHint("GOの検索欄を開いて、キーボードを表示してから登録してください")
+            reportHint("GOの検索欄を開いて、キーボードを表示してから登録してください")
             return
         }
         val id = ++generation
@@ -2586,7 +2603,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             learningPending = false
             if (frame == null || !gameInForeground() || !frameCurrent(frame)) {
                 frame?.bitmap?.recycle()
-                OverlayCopyQueueController.showInputHint("GOの画面を取得できませんでした。ユーザー補助をオフ→オンにして再試行してください")
+                reportHint("GOの画面を取得できませんでした。ユーザー補助をオフ→オンにして再試行してください")
                 return@captureGameScreen
             }
             val bitmap = frame.bitmap
@@ -2600,7 +2617,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                 val allowed = GoKeyboardVisual.regions(control, frame.displayBounds, frame.imeBounds).map(::toPixels)
                 if (allowed.isEmpty()) {
                     bitmap.recycle()
-                    OverlayCopyQueueController.showInputHint("キーボードを画面下に表示してから登録してください")
+                    reportHint("キーボードを画面下に表示してから登録してください")
                     return@captureGameScreen
                 }
                 // Keep GO and the rest of the keyboard out of the teaching frame.
@@ -2609,7 +2626,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                 canvas.drawColor(Color.BLACK)
                 allowed.forEach { canvas.drawBitmap(bitmap, it, it, null) }
                 bitmap.recycle()
-                showLearningFrame(id, redacted, role, replacement, preview, emptyList(), allowed)
+                showLearningFrame(id, redacted, role, replacement, preview, emptyList(), allowed, onFeedback = onFeedback)
                 return@captureGameScreen
             }
             val excluded = frame.imeBounds.map(::toPixels)
@@ -2621,20 +2638,27 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                 val canvas = Canvas(redacted)
                 val paint = Paint().apply { color = Color.BLACK }
                 excluded.forEach { canvas.drawRect(it, paint) }
-                showLearningFrame(id, redacted, role, replacement, preview, excluded)
-            } else showLearningFrame(id, bitmap, role, replacement, preview, excluded)
+                showLearningFrame(id, redacted, role, replacement, preview, excluded, onFeedback = onFeedback)
+            } else showLearningFrame(id, bitmap, role, replacement, preview, excluded, onFeedback = onFeedback)
         }
     }
 
     private fun showLearningFrame(id: Int, bitmap: Bitmap, role: GoButtonTemplateStore.Role?,
                                   replacement: Int?, preview: Boolean, excluded: List<Rect>,
-                                  allowed: List<Rect>? = null, frozen: Boolean = false) {
+                                  allowed: List<Rect>? = null, frozen: Boolean = false,
+                                  onFeedback: ((String) -> Unit)? = null) {
+        fun reportHint(message: String) {
+            onFeedback?.invoke(message) ?: OverlayCopyQueueController.showInputHint(message)
+        }
+        fun reportResult(message: String) {
+            onFeedback?.invoke(message) ?: OverlayCopyQueueController.showLearningResult(message)
+        }
         fun show(box: Rect?) {
             if (id != generation || (!frozen && !gameInForeground())) { bitmap.recycle(); return }
             learning = GoButtonLearningOverlay(this, bitmap, role, replacement, excluded, box, allowed,
                 ::readLearningLabel) { message ->
                 learning = null
-                if (message != null) OverlayCopyQueueController.showLearningResult(message)
+                if (message != null) reportResult(message)
             }
             learning?.show()
             if (preview) traceEvent("BUTTON_RECOGNITION", "role=preview method=template result=found")
@@ -2652,13 +2676,27 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                     (gray.height * .07f).toInt(), gray.width, (gray.height * .25f).toInt())
                 GoLearningTarget.SELECT_ALL -> GoButtonMatcher.Box((gray.width * .58f).toInt(),
                     (gray.height * .025f).toInt(), gray.width, (gray.height * .145f).toInt())
+                GoLearningTarget.DETAIL_MENU -> GoButtonMatcher.Box((gray.width * .7f).toInt(),
+                    (gray.height * .85f).toInt(), gray.width, gray.height)
+                GoLearningTarget.APPRAISAL -> GoButtonMatcher.Box((gray.width * .7f).toInt(),
+                    (gray.height * .55f).toInt(), gray.width, (gray.height * .94f).toInt())
                 else -> null
             }
+            val dense = role.target == GoLearningTarget.SEARCH_CLEAR || role.target == GoLearningTarget.SELECT_ALL
+            val contrastInvariant = role.target in setOf(
+                GoLearningTarget.NICKNAME, GoLearningTarget.DETAIL_CLOSE,
+                GoLearningTarget.DETAIL_MENU, GoLearningTarget.APPRAISAL
+            )
             val control = GoCleanupKeyboard.Control.entries.firstOrNull { it.target == role.target }
             val templates = buttonTemplates.load(role)
-            val match = if (control != null && allowed != null)
+            val rawMatch = if (control != null && allowed != null)
                 GoKeyboardVisual.find(control, gray, allowed.map(::scaled), templates)
-            else GoButtonMatcher.detect(gray, templates, blocked, region = toolbar, dense = toolbar != null)?.box
+            else GoButtonMatcher.detect(gray, templates, blocked, region = toolbar, dense = dense)?.box
+                ?: if (contrastInvariant) GoButtonMatcher.detect(gray, templates, blocked,
+                    contrastInvariant = true, region = toolbar, dense = dense)?.box else null
+            val match = if (role.target == GoLearningTarget.APPRAISAL) rawMatch?.takeIf {
+                it.cx > gray.width * .7f && it.cy > gray.height * .60f && it.cy < gray.height * .92f
+            } else rawMatch
             val box = match?.let {
                 Rect((it.left / ratio).roundToInt(), (it.top / ratio).roundToInt(),
                     (it.right / ratio).roundToInt(), (it.bottom / ratio).roundToInt())
@@ -2666,7 +2704,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             main.post {
                 if (box != null) show(box) else {
                     bitmap.recycle()
-                    if (id == generation) OverlayCopyQueueController.showInputHint("見本に一致するボタンを確認できませんでした")
+                    if (id == generation) reportHint("見本に一致するボタンを確認できませんでした")
                 }
             }
         }
@@ -3274,17 +3312,26 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             val holdRow = if (needsPending && holdTarget != null) GoTagRecognition.row(tagged, holdTarget, learned) else null
             val holdSelected = checked(holdRow)
             val detailGray = if ((needsClose || needsMenu) && base.detail && !keyboard) gray else null
-            val appraisal = if (readerActive && detailGray != null) GoButtonMatcher.detect(detailGray, appraisalTemplates, contrastInvariant=true)?.box?.takeIf {
-                it.cx > detailGray.width * .7f && it.cy > detailGray.height * .60f && it.cy < detailGray.height * .92f
-            }?.let { b -> val r = bitmap.width.toFloat() / detailGray.width
-                GoWorkflowPolicy.Box((b.left*r).roundToInt(),(b.top*r).roundToInt(),(b.right*r).roundToInt(),(b.bottom*r).roundToInt())
+            val appraisalCandidates = if (readerActive && detailGray != null)
+                buttonTemplates.load(GoLearningTarget.APPRAISAL) + appraisalTemplates else emptyList()
+            val appraisal = if (appraisalCandidates.isNotEmpty() && detailGray != null) {
+                val region = GoButtonMatcher.Box((detailGray.width * .7f).toInt(),
+                    (detailGray.height * .55f).toInt(), detailGray.width, (detailGray.height * .94f).toInt())
+                GoButtonMatcher.detect(detailGray, appraisalCandidates, contrastInvariant = true, region = region)?.box?.takeIf {
+                    it.cx > detailGray.width * .7f && it.cy > detailGray.height * .60f && it.cy < detailGray.height * .92f
+                }?.let { b ->
+                    val r = bitmap.width.toFloat() / detailGray.width
+                    GoWorkflowPolicy.Box((b.left*r).roundToInt(),(b.top*r).roundToInt(),(b.right*r).roundToInt(),(b.bottom*r).roundToInt())
+                }
             } else null
             val needReaderMenu = holdStage == GoHoldWorkflow.Stage.DETAIL || (readerActive && appraisal == null)
-            val menu = if (needsMenu && detailGray != null && (!readerActive || needReaderMenu)) {
+            val menuCandidates = if (needsMenu && detailGray != null && (!readerActive || needReaderMenu))
+                buttonTemplates.load(GoLearningTarget.DETAIL_MENU) + menuTemplates else emptyList()
+            val menu = if (menuCandidates.isNotEmpty() && detailGray != null) {
                 val region = GoButtonMatcher.Box((detailGray.width * .7f).toInt(),
                     (detailGray.height * .85f).toInt(), detailGray.width, detailGray.height)
-                (GoButtonMatcher.detect(detailGray, menuTemplates, region = region)
-                    ?: GoButtonMatcher.detect(detailGray, menuTemplates, contrastInvariant = true, region = region))?.box
+                (GoButtonMatcher.detect(detailGray, menuCandidates, region = region)
+                    ?: GoButtonMatcher.detect(detailGray, menuCandidates, contrastInvariant = true, region = region))?.box
             } else null
             val menuBox = menu?.let { b -> val r = bitmap.width.toFloat() / detailGray!!.width
                 GoWorkflowPolicy.Box((b.left*r).roundToInt(),(b.top*r).roundToInt(),(b.right*r).roundToInt(),(b.bottom*r).roundToInt())
