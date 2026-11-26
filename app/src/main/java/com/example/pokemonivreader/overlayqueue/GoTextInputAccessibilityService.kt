@@ -707,7 +707,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
         GoVisibilitySession {
             val search = OverlayCopyQueueController.pauseVisualOverlay(persistent = true)
             val reader = ReaderOverlayVisibility.pause()
-            {
+            return@GoVisibilitySession {
                 reader()
                 search()
             }
