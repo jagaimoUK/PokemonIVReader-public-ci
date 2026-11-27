@@ -355,11 +355,18 @@ internal fun IvReaderScreen(ivRevision: Int, refreshOnOpen: Boolean = true) {
     }
 
     var startupChecklist by remember { mutableStateOf<ReaderSetupChecklist.Summary?>(null) }
+    var previousHistoryPrompt by remember { mutableStateOf<List<AutoIvRecords.SpeciesGroup>?>(null) }
+    var selectedSpeciesToDelete by remember { mutableStateOf<Set<String>>(emptySet()) }
     LaunchedEffect(refreshOnOpen) {
         if (refreshOnOpen) {
             val summary = ReaderSetupChecklist.evaluate(context)
             if (!summary.allReady) {
                 startupChecklist = summary
+            }
+            val groups = AutoIvRecords.speciesGroups(context)
+            if (groups.isNotEmpty()) {
+                previousHistoryPrompt = groups
+                selectedSpeciesToDelete = groups.map { it.species }.toSet()
             }
         }
     }
@@ -379,6 +386,72 @@ internal fun IvReaderScreen(ivRevision: Int, refreshOnOpen: Boolean = true) {
         actionMessage=if(deleted>=0) "" else "削除できませんでした"
         if(deleted>=0) selectedRecords=selectedRecords-keys
         autoRecordRevision++
+    }
+
+    if (startupChecklist == null) {
+        previousHistoryPrompt?.let { groups ->
+            val totalCount = groups.sumOf { it.count }
+            val selectedCount = groups.filter { it.species in selectedSpeciesToDelete }.sumOf { it.count }
+            AlertDialog(
+                onDismissRequest = { previousHistoryPrompt = null },
+                title = { Text("以前の読み取り履歴（計 ${totalCount}件）") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("削除するポケモンを選んでください（厳選リスト・学習見本は残ります）。")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = {
+                                selectedSpeciesToDelete = groups.map { it.species }.toSet()
+                            }) { Text("すべて選択") }
+                            TextButton(onClick = {
+                                selectedSpeciesToDelete = emptySet()
+                            }) { Text("すべて解除") }
+                        }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            groups.forEach { group ->
+                                val checked = group.species in selectedSpeciesToDelete
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = { isChecked ->
+                                            selectedSpeciesToDelete = if (isChecked) {
+                                                selectedSpeciesToDelete + group.species
+                                            } else {
+                                                selectedSpeciesToDelete - group.species
+                                            }
+                                        }
+                                    )
+                                    Text("${group.species}（${group.count}件）")
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = selectedCount > 0,
+                        onClick = {
+                            val keys = groups
+                                .filter { it.species in selectedSpeciesToDelete }
+                                .flatMap { it.keys }
+                                .toSet()
+                            previousHistoryPrompt = null
+                            if (keys.isNotEmpty()) deleteRecords(keys)
+                        }
+                    ) { Text("選択を削除（${selectedCount}件）") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { previousHistoryPrompt = null }) { Text("すべて残す") }
+                }
+            )
+        }
     }
 
     if (confirmDeleteAll) {
