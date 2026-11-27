@@ -443,6 +443,15 @@ internal object AutoIvRecords {
             deleteMany(context, keys)
         } catch (_: Exception) { -1 }
     }
+    data class SpeciesGroup(val species: String, val count: Int, val keys: Set<String>)
+
+    fun speciesGroups(context: Context): List<SpeciesGroup> = load(context)
+        .groupBy { it.source.ifBlank { "未認識" } }
+        .map { (species, rows) ->
+            SpeciesGroup(species, rows.size, rows.map { it.selectionKey }.toSet())
+        }
+        .sortedWith(compareByDescending<SpeciesGroup> { it.count }.thenBy { it.species })
+
     fun count(context: Context): Int = synchronized(lock) {
         try { records(context).length() } catch (_: Exception) { -1 }
     }

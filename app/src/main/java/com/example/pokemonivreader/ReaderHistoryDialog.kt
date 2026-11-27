@@ -9,17 +9,31 @@ import android.widget.Toast
 /** Reuse the existing atomic delete/undo store without leaving the game. */
 internal object ReaderHistoryDialog {
     fun show(context: Context) {
-        val keys = AutoIvRecords.load(context).map { it.selectionKey }.toSet()
+        val groups = AutoIvRecords.speciesGroups(context)
+        val total = groups.sumOf { it.count }
+        val checked = BooleanArray(groups.size) { true }
+        val labels = groups.map { "${it.species}（${it.count}件）" }.toTypedArray()
         val builder = AlertDialog.Builder(ContextThemeWrapper(context, android.R.style.Theme_Material_Dialog_Alert))
-            .setTitle("読み取り履歴を削除")
-            .setMessage("読み取り履歴 ${keys.size}件を削除します。厳選リスト・学習した見本は保持されます。")
+            .setTitle("読み取り履歴を削除（計 ${total}件）")
             .setNegativeButton("キャンセル", null)
-        if (keys.isNotEmpty()) builder.setPositiveButton("${keys.size}件を削除") { _, _ ->
-            val deleted = AutoIvRecords.deleteMany(context, keys)
-            if (deleted < 0) toast(context, "履歴を削除できませんでした")
-            else {
-                // Dismiss quietly. Undo remains available when this menu is opened again.
+        if (groups.isNotEmpty()) {
+            builder.setMultiChoiceItems(labels, checked) { _, which, isChecked ->
+                checked[which] = isChecked
             }
+            builder.setPositiveButton("選択したポケモンを削除") { _, _ ->
+                val keys = groups.indices
+                    .filter { checked[it] }
+                    .flatMap { groups[it].keys }
+                    .toSet()
+                if (keys.isEmpty()) {
+                    toast(context, "削除対象が選択されていません")
+                    return@setPositiveButton
+                }
+                val deleted = AutoIvRecords.deleteMany(context, keys)
+                if (deleted < 0) toast(context, "履歴を削除できませんでした")
+            }
+        } else {
+            builder.setMessage("削除できる読み取り履歴はありません。厳選リスト・学習した見本は保持されます。")
         }
         if (AutoIvRecords.canUndo(context)) builder.setNeutralButton("削除を元に戻す") { _, _ ->
             val restored = AutoIvRecords.undoDelete(context)

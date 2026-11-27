@@ -51,4 +51,23 @@ class ReaderHistoryDialogTest {
         assertEquals(1,AutoIvRecords.load(context).size)
         assertEquals(0,ShadowToast.shownToastCount())
     }
+
+    @Test fun groupsRecordsBySpeciesAndDeletesSelectedSpeciesOnly() {
+        assertTrue(AutoIvRecords.save(context, "row-2", JSONObject()
+            .put("recordId", "row-2").put("sourceId", "quagsire").put("source", "ヌオー")
+            .put("cp", 500).put("attack", 0).put("defense", 15).put("hp", 15), insert = true))
+        assertTrue(AutoIvRecords.save(context, "row-3", JSONObject()
+            .put("recordId", "row-3").put("sourceId", "quagsire").put("source", "ヌオー")
+            .put("cp", 600).put("attack", 1).put("defense", 14).put("hp", 14), insert = true))
+
+        val groups = AutoIvRecords.speciesGroups(context)
+        assertEquals(2, groups.size)
+        assertEquals("ヌオー", groups[0].species)
+        assertEquals(2, groups[0].count)
+
+        assertEquals(2, AutoIvRecords.deleteMany(context, groups[0].keys))
+        val remaining = AutoIvRecords.speciesGroups(context)
+        assertEquals(1, remaining.size)
+        assertNotEquals("ヌオー", remaining.single().species)
+    }
 }
