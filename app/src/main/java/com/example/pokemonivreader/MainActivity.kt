@@ -2,6 +2,7 @@ package com.example.pokemonivreader
 
 import android.content.Context
 import com.example.pokemonivreader.catchassist.CatchTrialActivity
+import com.example.pokemonivreader.overlayqueue.GoStepUpLearningGuide
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionConfig
@@ -354,22 +355,83 @@ internal fun IvReaderScreen(ivRevision: Int, refreshOnOpen: Boolean = true) {
         }
     }
 
-    var startupChecklist by remember { mutableStateOf<ReaderSetupChecklist.Summary?>(null) }
-    LaunchedEffect(refreshOnOpen) {
+    var setupSummary by remember(ivRevision, autoRecordRevision) {
+        mutableStateOf(ReaderSetupChecklist.evaluate(context))
+    }
+    var showSetupDialog by remember { mutableStateOf(false) }
+    var setupDismissed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(refreshOnOpen, ivRevision) {
         if (refreshOnOpen) {
-            val summary = ReaderSetupChecklist.evaluate(context)
-            if (!summary.allReady) {
-                startupChecklist = summary
+            val evaluated = ReaderSetupChecklist.evaluate(context)
+            setupSummary = evaluated
+            if (evaluated.allReady) {
+                showSetupDialog = false
+            } else if (!setupDismissed) {
+                showSetupDialog = true
             }
         }
     }
-    startupChecklist?.let { summary ->
+    fun advanceSetupStep(step: ReaderSetupChecklist.Item) {
+        when (step.stepKind) {
+            ReaderSetupChecklist.StepKind.OVERLAY_PERMISSION -> {
+                runCatching {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                }.onFailure {
+                    actionMessage = "オーバーレイ権限の設定画面を開けませんでした"
+                }
+            }
+            ReaderSetupChecklist.StepKind.ACCESSIBILITY_SERVICE -> {
+                runCatching {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }.onFailure {
+                    actionMessage = "ユーザー補助の設定画面を開けませんでした"
+                }
+            }
+            ReaderSetupChecklist.StepKind.GO_LEARNING -> {
+                val started = GoStepUpLearningGuide.start(context, launchGo = true) {
+                    setupSummary = ReaderSetupChecklist.evaluate(context)
+                    autoRecordRevision++
+                }
+                if (!started) {
+                    actionMessage = "ステップアップ学習を開始できませんでした。オーバーレイ権限を確認してください"
+                }
+            }
+        }
+    }
+    if (showSetupDialog && !setupSummary.allReady) {
+        val next = setupSummary.nextStep
+        val primaryLabel = when (next?.stepKind) {
+            ReaderSetupChecklist.StepKind.OVERLAY_PERMISSION -> "オーバーレイ権限を設定する"
+            ReaderSetupChecklist.StepKind.ACCESSIBILITY_SERVICE -> "ユーザー補助を設定する"
+            ReaderSetupChecklist.StepKind.GO_LEARNING -> "GOを開いてこの項目を学習する"
+            null -> "閉じる"
+        }
         AlertDialog(
-            onDismissRequest = { startupChecklist = null },
-            title = { Text("自動化の事前準備チェック") },
-            text = { Text(summary.dialogMessage()) },
+            onDismissRequest = {
+                setupDismissed = true
+                showSetupDialog = false
+            },
+            title = { Text("自動化のステップアップ準備") },
+            text = { Text(setupSummary.dialogMessage()) },
             confirmButton = {
-                TextButton(onClick = { startupChecklist = null }) { Text("確認した") }
+                TextButton(onClick = {
+                    if (next != null) {
+                        advanceSetupStep(next)
+                    } else {
+                        showSetupDialog = false
+                    }
+                }) { Text(primaryLabel) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    setupDismissed = true
+                    showSetupDialog = false
+                }) { Text("あとで") }
             }
         )
     }
@@ -469,6 +531,15 @@ internal fun IvReaderScreen(ivRevision: Int, refreshOnOpen: Boolean = true) {
                 enabled = autoRecords.any { it.targets.isNotEmpty() }) { Text("厳選アプリへ送る") }
                     Text("送る：厳選アプリで取り込み・比較へ。コピー：手動貼り付け用。",
                         style = MaterialTheme.typography.bodySmall)
+                    if (!setupSummary.allReady) {
+                        val next = setupSummary.nextStep
+                        Button(
+                            onClick = { if (next != null) advanceSetupStep(next) else showSetupDialog = true },
+                            modifier = Modifier.fillMaxWidth().testTag("reader-step-up-setup")
+                        ) {
+                            Text("ステップアップ学習（${setupSummary.completedCount}/${setupSummary.totalCount}）: ${next?.title ?: "確認"}")
+                        }
+                    }
                 }
             Button(
                 onClick = {
