@@ -17,6 +17,10 @@ GRADLE = 'versionCode = 99\nversionName = "1.5.74"\n'
 class ReleasePolicyTests(unittest.TestCase):
     def test_valid_update(self):
         module.validate("v1.5.74", "99", "98", GRADLE, IDENTITY)
+        gradle_env = ('versionCode = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull() ?: 99\n'
+                      'versionName = System.getenv("ANDROID_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.5.74"\n')
+        module.validate("v1.5.74", "99", "98", gradle_env, IDENTITY)
+        module.validate("v1.5.1050", "1050", "104", gradle_env, IDENTITY, "1050", "1.5.1050")
 
     def test_bad_version_or_identity_rejected(self):
         cases = [
