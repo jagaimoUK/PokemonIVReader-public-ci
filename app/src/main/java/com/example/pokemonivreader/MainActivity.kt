@@ -354,6 +354,26 @@ internal fun IvReaderScreen(ivRevision: Int, refreshOnOpen: Boolean = true) {
         }
     }
 
+    var startupChecklist by remember { mutableStateOf<ReaderSetupChecklist.Summary?>(null) }
+    LaunchedEffect(refreshOnOpen) {
+        if (refreshOnOpen) {
+            val summary = ReaderSetupChecklist.evaluate(context)
+            if (!summary.allReady) {
+                startupChecklist = summary
+            }
+        }
+    }
+    startupChecklist?.let { summary ->
+        AlertDialog(
+            onDismissRequest = { startupChecklist = null },
+            title = { Text("自動化の事前準備チェック") },
+            text = { Text(summary.dialogMessage()) },
+            confirmButton = {
+                TextButton(onClick = { startupChecklist = null }) { Text("確認した") }
+            }
+        )
+    }
+
     fun deleteRecords(keys:Set<String>) {
         val deleted=AutoIvRecords.deleteMany(context,keys)
         actionMessage=if(deleted>=0) "" else "削除できませんでした"

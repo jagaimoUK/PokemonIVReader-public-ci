@@ -475,7 +475,7 @@ class ScreenCaptureService : Service() {
         }
         val quickMenu = ReaderQuickMenuPopup(
             this,
-            autoRead = { startAutomaticReading(automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this)) },
+            autoRead = { startUnifiedAutomation(automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this)) },
             resumeAutoRead = { startAutomaticReading(automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this), resume = true) },
             boxRead = ::startBoxReverseReading,
             manageDifficultSpecies = ::showManageDifficultSpeciesDialog,
@@ -834,6 +834,51 @@ class ScreenCaptureService : Service() {
         refreshReviewBadge()
         capturePending.set(true)
         main.postDelayed(scanTimeout,1500L)
+    }
+
+    private fun startUnifiedAutomation(automation: Boolean) {
+        resumePopup?.dismiss()
+        if (GoTextInputAccessibilityService.isCatchTrialRunning()) {
+            Toast.makeText(this, "捕獲をオフにしてから読み取ってください", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (throwRecording != null || autoReading || projection == null || pipeline.size() != 0 || appraisalReview.isShowing) {
+            updateNotification("読取・確認が完了してから自動読み取りを開始してください")
+            return
+        }
+        updateNotification("GOの画面を確認中…")
+        GoTextInputAccessibilityService.detectCurrentScreen { screen ->
+            main.post {
+                if (hasStopped || autoReading) return@post
+                when (screen) {
+                    GoTextInputAccessibilityService.CurrentGoScreen.BOX_LIST -> {
+                        val boxGrid = com.example.pokemonivreader.overlayqueue.GoButtonTemplateStore(this).loadBoxGrid()
+                        if (boxGrid != null) {
+                            startBoxReverseReading(null)
+                        } else {
+                            updateNotification("ボックス一覧の範囲が未学習です。⋯ → ボタンを学習 → 画面を囲んで登録 から設定してください")
+                            Toast.makeText(this, "ボックス一覧の範囲を先に学習してください", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    GoTextInputAccessibilityService.CurrentGoScreen.DETAIL_OR_APPRAISAL -> {
+                        startAutomaticReading(automation = automation, resume = false)
+                    }
+                    GoTextInputAccessibilityService.CurrentGoScreen.TAG_LIST -> {
+                        updateNotification("タグ一覧を閉じて詳細またはボックス一覧を表示してから開始してください")
+                        Toast.makeText(this, "タグ一覧を閉じてから開始してください", Toast.LENGTH_SHORT).show()
+                    }
+                    GoTextInputAccessibilityService.CurrentGoScreen.OTHER,
+                    GoTextInputAccessibilityService.CurrentGoScreen.UNAVAILABLE -> {
+                        if (automaticFrame?.appraisal == true) {
+                            startAutomaticReading(automation = automation, resume = false)
+                        } else {
+                            updateNotification("GOのボックス一覧・個体詳細・評価画面のいずれかを開いて開始してください")
+                            Toast.makeText(this, "GOのボックス一覧・詳細・評価画面を開いてください", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun startAutomaticReading(automation:Boolean=false,resume:Boolean=false) {

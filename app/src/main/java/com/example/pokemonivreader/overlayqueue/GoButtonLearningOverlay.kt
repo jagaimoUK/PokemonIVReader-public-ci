@@ -120,7 +120,7 @@ internal class GoButtonLearningOverlay(
             }
         }
         action("役割選択を閉じる") { dismiss() }
-        store.roles().filter { it.target?.keyboardControl != true }
+        store.roles()
             .forEach { value -> action(value.title) { selectRole(value) } }
         val picker = FrameLayout(context).apply {
             setBackgroundColor(0xB3000000.toInt())
@@ -254,11 +254,7 @@ internal class GoButtonLearningOverlay(
                 showStatus("表示されたキーの範囲内で、キーだけを囲んでください")
                 return
             }
-            if (target?.keyboardControl == true && allowed == null) {
-                showStatus("キーボードを開き、登録済みボタンからこの役割を選んでください")
-                return
-            }
-            if (excluded.any { Rect.intersects(it, region) }) {
+            if (target?.keyboardControl != true && excluded.any { Rect.intersects(it, region) }) {
                 showStatus("キーボードを避けて枠を指定してください")
                 return
             }

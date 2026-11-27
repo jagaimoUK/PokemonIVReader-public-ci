@@ -37,22 +37,8 @@ internal object GoButtonLearningMenu {
         if (!anchor.isAttachedToWindow || isLocked()) return
         val store = GoButtonTemplateStore(context)
         val popup = PopupMenu(context, anchor).apply {
-            menu.action("ボタンを囲んで登録", !isLocked()) { requestLearning(null, null, false) }
-            menu.action("評価パネルの範囲を学習", !isLocked()) {
-                requestLearning(store.role(GoLearningTarget.APPRAISAL_PANEL), null, false)
-            }
-            menu.action("ボックス一覧の範囲を学習", !isLocked()) {
-                requestLearning(store.role(GoLearningTarget.BOX_GRID), null, false)
-            }
-            menu.addSubMenu("キーボード操作を学習").apply {
-                GoCleanupKeyboard.Control.entries.forEach { control ->
-                    val role = store.role(control.target)
-                    action(role.title, !isLocked()) {
-                        learnRecoveryTarget(context, control.target, showDialog, requestLearning)
-                    }
-                }
-            }
-            menu.action("登録済みボタン", !isLocked()) {
+            menu.action("画面を囲んで登録（ボタン・範囲・キーボード）", !isLocked()) { requestLearning(null, null, false) }
+            menu.action("登録済みボタン・範囲", !isLocked()) {
                 anchor.post {
                     if (!anchor.isAttachedToWindow || isLocked()) return@post
                     showLearnedRoles(context, anchor, store, isLocked, onStatus, onRename, requestLearning, onMenuOpened)
