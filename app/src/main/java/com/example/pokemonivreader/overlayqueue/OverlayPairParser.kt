@@ -4,7 +4,16 @@ import org.json.JSONObject
 
 /** The current PvPoke app export contract is exactly two lines per individual:
  *  Pokémon GO search expression, then nickname. Preserve both verbatim. */
-data class OverlayPair(val searchText: String, val nickname: String, val ivs: String? = null, val targetName: String? = null)
+data class OverlayPair(
+    val searchText: String,
+    val nickname: String,
+    val ivs: String? = null,
+    val targetName: String? = null,
+    val megaLevel: Int? = null,
+    val charged3: String? = null,
+    val targetSpecies: String? = null,
+    val superMaxHypothesisStatus: String? = null,
+)
 
 class OverlayPairFormatException(message: String) : IllegalArgumentException(message)
 
@@ -44,7 +53,19 @@ object OverlayPairParser {
                 val target = if (item.isNull("target_name")) null else item.getString("target_name").also {
                     require(it.isNotBlank() && it.length <= 150 && it.none { c -> c == '\n' || c == '\r' }) { "進化先名が不正です" }
                 }
-                OverlayPair(search, nickname, ivs, target)
+                val megaLevel = if (item.isNull("mega_level")) null else item.getInt("mega_level").also {
+                    require(it in 1..4) { "メガレベルは1〜4です" }
+                }
+                val charged3 = if (item.isNull("charged3")) null else item.getString("charged3").also {
+                    require(it.isNotBlank() && it.length <= 100 && it.none { c -> c == '\n' || c == '\r' }) { "特別技が不正です" }
+                }
+                val targetSpecies = if (item.isNull("target_species")) null else item.getString("target_species").also {
+                    require(it.isNotBlank() && it.length <= 100) { "対象種族IDが不正です" }
+                }
+                val superMaxStatus = if (item.isNull("super_max_pl_hypothesis_status")) null else item.getString("super_max_pl_hypothesis_status").also {
+                    require(it.length <= 50) { "スーパーMAXステータスが不正です" }
+                }
+                OverlayPair(search, nickname, ivs, target, megaLevel, charged3, targetSpecies, superMaxStatus)
             }
         } catch (e: Exception) {
             throw OverlayPairFormatException("取り込み内容を確認してください: ${e.message}")
