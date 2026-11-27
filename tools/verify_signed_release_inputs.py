@@ -12,17 +12,22 @@ def fail(message: str) -> None:
     raise ValueError(message)
 
 def validate(release_tag: str, expected_code: str, installed_code: str,
-             gradle: str, identity: str) -> None:
+             gradle: str, identity: str,
+             env_version_code: str = "", env_version_name: str = "") -> None:
     if not re.fullmatch(r"v[0-9]+(?:\.[0-9]+){2}", release_tag):
         fail("release_tag must be vMAJOR.MINOR.PATCH")
     if not re.fullmatch(r"[1-9][0-9]*", expected_code):
         fail("expected_version_code must be a positive integer")
     if not re.fullmatch(r"[1-9][0-9]*", installed_code):
         fail("installed_version_code must be a positive integer")
-    vc = re.findall(r"^\s*versionCode\s*=\s*([0-9]+)\s*$", gradle, re.M)
-    vn = re.findall(r'^\s*versionName\s*=\s*"([^"]+)"\s*$', gradle, re.M)
-    if len(vc) != 1 or len(vn) != 1 or vc[0] != expected_code or release_tag != "v" + vn[0]:
-        fail("release inputs do not match app/build.gradle.kts")
+    if env_version_code or env_version_name:
+        if env_version_code != expected_code or release_tag != "v" + env_version_name:
+            fail("release inputs do not match ANDROID_VERSION_CODE / ANDROID_VERSION_NAME")
+    else:
+        vc = re.findall(r"^\s*versionCode\s*=\s*(?:System\.getenv\([^)]*\)\?\.toIntOrNull\(\)\s*\?:\s*)?([0-9]+)\s*$", gradle, re.M)
+        vn = re.findall(r'^\s*versionName\s*=\s*(?:System\.getenv\([^)]*\)\?\.takeIf\s*\{[^}]*\}\s*\?:\s*)?"([^"]+)"\s*$', gradle, re.M)
+        if len(vc) != 1 or len(vn) != 1 or vc[0] != expected_code or release_tag != "v" + vn[0]:
+            fail("release inputs do not match app/build.gradle.kts")
     settings = {}
     for line in identity.splitlines():
         if "=" in line and not line.lstrip().startswith("#"):
@@ -49,6 +54,8 @@ if __name__ == "__main__":
             os.environ.get("INSTALLED_VERSION_CODE", ""),
             (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8"),
             CONFIG.read_text(encoding="utf-8"),
+            os.environ.get("ANDROID_VERSION_CODE", ""),
+            os.environ.get("ANDROID_VERSION_NAME", ""),
         )
     except (ValueError, OSError) as exc:
         print("::error::Release input validation failed:", exc, file=sys.stderr)

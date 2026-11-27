@@ -5,17 +5,20 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag exactly matching Gradle versionName (example v1.5.74)"
-        required: true
+        description: "Optional release tag (default: auto v1.5.<versionCode>)"
+        required: false
         type: string
+        default: ""
       expected_version_code:
-        description: "Must equal Gradle versionCode and exceed installed_version_code"
-        required: true
+        description: "Optional versionCode (default: auto 1000 + github.run_number)"
+        required: false
         type: string
+        default: ""
       installed_version_code:
-        description: "Current installed APK versionCode; NEVER uninstall to upgrade"
-        required: true
+        description: "Current installed APK versionCode (default: 104)"
+        required: false
         type: string
+        default: ""
 
 concurrency:
   group: android-signed-public-release
@@ -35,12 +38,29 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Verify canonical repository and current source metadata
+      - name: Resolve release version
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          EXPECTED_VERSION_CODE: ${{ inputs.expected_version_code }}
-          INSTALLED_VERSION_CODE: ${{ inputs.installed_version_code }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          INPUT_EXPECTED: ${{ inputs.expected_version_code }}
+          INPUT_INSTALLED: ${{ inputs.installed_version_code }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          EXPECTED="${INPUT_EXPECTED:-$((1000 + RUN_NUMBER))}"
+          TAG="${INPUT_TAG:-v1.5.$EXPECTED}"
+          INSTALLED="${INPUT_INSTALLED:-104}"
+          VNAME="${TAG#v}"
+          {
+            echo "RELEASE_TAG=$TAG"
+            echo "EXPECTED_VERSION_CODE=$EXPECTED"
+            echo "INSTALLED_VERSION_CODE=$INSTALLED"
+            echo "ANDROID_VERSION_CODE=$EXPECTED"
+            echo "ANDROID_VERSION_NAME=$VNAME"
+          } >> "$GITHUB_ENV"
+          echo "Resolved release: $TAG (versionCode=$EXPECTED, installed=$INSTALLED)"
+      - name: Verify canonical repository and current source metadata
+        shell: bash
         run: |
           set -euo pipefail
           bash tools/assert_canonical_repo.sh
@@ -86,7 +106,6 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -102,7 +121,6 @@ jobs:
           APK_STORE_PASS: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
           APK_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
           APK_KEY_PASS: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
-          EXPECTED_VERSION_CODE: ${{ inputs.expected_version_code }}
         run: |
           set -euo pipefail
           umask 077
@@ -135,10 +153,10 @@ jobs:
           fi
           BADGING=$("$BT/aapt" dump badging deliverable/PokemonIVReader-signed.apk | grep -m1 '^package:')
           [[ "$BADGING" == *"name='com.example.pokemonivreader'"* ]] || {
-            echo "::error::Application ID mismatch"; exit 1
+            echo "::error::Application ID mismatch"; exit 1;
           }
           [[ "$BADGING" == *"versionCode='$EXPECTED_VERSION_CODE'"* ]] || {
-            echo "::error::APK versionCode mismatch"; exit 1
+            echo "::error::APK versionCode mismatch"; exit 1;
           }
           echo "PASS: APK signature, application ID and versionCode verified"
           (cd deliverable && sha256sum PokemonIVReader-signed.apk > SHA256SUMS.txt)
@@ -146,8 +164,6 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          EXPECTED_VERSION_CODE: ${{ inputs.expected_version_code }}
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" deliverable/PokemonIVReader-signed.apk deliverable/SHA256SUMS.txt \
