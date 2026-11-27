@@ -90,6 +90,7 @@ internal object ScreenTextRecognizer {
                   heightCrop: Bitmap? = null,
                   cpFrames: List<Bitmap> = emptyList(),
                   needsTypes: (String) -> Boolean = { true },
+                  cpOverride: Int? = null,
                   cpReady: (Int?) -> Unit = {}, done: (TextResult) -> Unit) {
         val jobs = mutableListOf<Task<Text>>()
         var typeImage: Bitmap? = null
@@ -101,15 +102,17 @@ internal object ScreenTextRecognizer {
             return start(image)
         }
         fun recycle(){(listOfNotNull(nameCrop,cpCrop,typeCrop,typeImage,shadowCrop,cpFallback,heightCrop) + cpFrames).distinct().forEach{it.recycle()}}
-        val cpTask:Task<Text>
+        val cpTask:Task<Text>?
         val nameTask:Task<Text>
         val shadowTask:Task<Text>?
         try {
-            val firstCp=start(cpCrop).also{jobs+=it}
-            cpTask=firstCp.continueWithTask(callbackExecutor) { task ->
-                val raw=if(task.isSuccessful)task.result?.text.orEmpty() else ""
-                if(extractCp(raw,true)!=null || cpFallback==null) task else start(cpFallback)
-            }.also{jobs+=it}
+            cpTask = if (cpOverride != null) null else {
+                val firstCp=start(cpCrop).also{jobs+=it}
+                firstCp.continueWithTask(callbackExecutor) { task ->
+                    val raw=if(task.isSuccessful)task.result?.text.orEmpty() else ""
+                    if(extractCp(raw,true)!=null || cpFallback==null) task else start(cpFallback)
+                }.also{jobs+=it}
+            }
             nameTask=start(nameCrop).also{jobs+=it}
             shadowTask=shadowCrop?.let{start(it).also{job->jobs+=job}}
         } catch (_:Exception) {
@@ -119,8 +122,8 @@ internal object ScreenTextRecognizer {
             return
         }
         Tasks.whenAllComplete(jobs).addOnCompleteListener(callbackExecutor) {
-            val cpRaw=if(cpTask.isSuccessful)cpTask.result?.text.orEmpty() else ""
-            val primaryCp=extractCp(cpRaw,true)
+            val cpRaw=if(cpTask?.isSuccessful==true)cpTask.result?.text.orEmpty() else ""
+            val primaryCp=cpOverride ?: extractCp(cpRaw,true)
             val nameRaw=if(nameTask.isSuccessful)nameTask.result?.text.orEmpty() else ""
             val name=extractCaughtName(nameRaw).orEmpty()
             val shadowRaw=if(shadowTask?.isSuccessful==true)shadowTask.result?.text.orEmpty() else ""
@@ -135,7 +138,7 @@ internal object ScreenTextRecognizer {
                 val types = extractTypes(typeRaw)
                 recycle()
                 done(TextResult(cp,name,when {
-                    !cpTask.isSuccessful || !nameTask.isSuccessful -> "OCR処理に失敗"
+                    (cpTask != null && !cpTask.isSuccessful) || !nameTask.isSuccessful -> "OCR処理に失敗"
                     nameRaw.isBlank() -> "ポケモン名を読み取れません"
                     name.isBlank() -> "下側の捕獲文から名前を抽出できません"
                     cp==null -> "CPを読み取れません"
@@ -144,6 +147,11 @@ internal object ScreenTextRecognizer {
                     badgeCount != null && badgeCount == types.size, badgeCount, cpCandidates, framesRead))
             }
             fun finish(typeRaw:String, heightRaw:String = "") {
+                if (cpOverride != null) {
+                    cpReady(cpOverride)
+                    finishWithCp(typeRaw, heightRaw, cpOverride, listOf(cpOverride), 0)
+                    return
+                }
                 if(cpFrames.isEmpty()) {
                     // A clipped CP can still look like a valid number. One frame is a candidate, not proof.
                     cpReady(null)
