@@ -46,6 +46,7 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
     // Bound attempts on an unrecognized screen; never keep tapping GO indefinitely.
     private var appraisalWaitSince = -1L
     private var appraisalOpens = 0
+    private var cpWaitStartedAt = -1L
     private val tick = Runnable { poll() }
     private val captureTimeout = Runnable { stop("解析の応答待ちで停止。保存履歴を確認して再開してください",StopReason.CAPTURE_TIMEOUT) }
     private fun now() = SystemClock.elapsedRealtime()
@@ -154,7 +155,7 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
                 val previous = candidate
                 if (previous != null && previous.signature.same(frame.signature) && frame.at - previous.at >= 400L) {
                     recordId = java.util.UUID.randomUUID().toString()
-                    retries = 0; holdState = HoldState.NONE; mismatch = null; candidate = null; baseline=frame; stage = Stage.READING
+                    retries = 0; cpWaitStartedAt = -1L; holdState = HoldState.NONE; mismatch = null; candidate = null; baseline=frame; stage = Stage.READING
                 } else if (previous == null || !previous.signature.same(frame.signature)) candidate = frame
             } else {
                 candidate = null
@@ -172,7 +173,8 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
             appraisalWaitSince = -1L
             appraisalOpens = 0
         }
-        if(retries>0 && frame?.appraisal!=true) {
+        val retrying = retries > 0 || cpWaitStartedAt >= 0L
+        if(retrying && frame?.appraisal!=true) {
             if(now()>=validationDeadline)stop("再読取する画面を確認できません。現在の個体を表示して再開してください",StopReason.FRAME_UNAVAILABLE)
             else schedule()
             return
@@ -231,7 +233,7 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
             }
             holdState = old.holdState
         }
-        if (retries > 0 && baseline?.signature?.same(frame.signature) != true) {
+        if (retrying && baseline?.signature?.same(frame.signature) != true) {
             if(confirmedChange(frame)) stop("再試行の途中で個体が変わったため停止しました",StopReason.INDIVIDUAL_CHANGED)
             else if(now()>=validationDeadline)stop("同じ個体の表示を再確認できません",StopReason.FRAME_UNAVAILABLE)
             else schedule()
@@ -247,7 +249,11 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
         baseline = frame
         if (!checkpoint(frame)) return
         stage = Stage.CAPTURING
-        port.hint("自動読取 ${saved + 1}体目" + if (retries > 0) "・再試行 $retries 回" else "")
+        port.hint("自動読取 ${saved + 1}体目" + when {
+            cpWaitStartedAt >= 0L -> "・CP待機中"
+            retries > 0 -> "・再試行 $retries 回"
+            else -> ""
+        })
         handler.postDelayed(captureTimeout, 30_000L)
         port.capture(recordId) { outcome ->
             if (stage != Stage.CAPTURING) return@capture
@@ -269,20 +275,33 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
     private fun completeCapture(current:Frame,outcome:OverlayIvProcessor.Outcome) {
         pendingOutcome=null
         if (outcome.phase != OverlayIvProcessor.Phase.SAVED) {
-            retries++
-            val attemptLimit = if (outcome.cpMissing) MAX_CP_ATTEMPTS else MAX_ATTEMPTS
-            if (retries < attemptLimit) {
-                stage = Stage.READING
-                validationDeadline = now() + 7_000L
-                port.hint("同じ個体を再読取中 ($retries/$attemptLimit)")
-                schedule(if (outcome.cpMissing) 450L else 800L + retries * 400L)
-                return
+            if (outcome.cpMissing) {
+                if (cpWaitStartedAt < 0L) cpWaitStartedAt = now()
+                val elapsed = now() - cpWaitStartedAt
+                if (elapsed < CP_WAIT_TIMEOUT_MS) {
+                    stage = Stage.READING
+                    validationDeadline = now() + 7_000L
+                    val remainingSec = ((CP_WAIT_TIMEOUT_MS - elapsed + 999L) / 1000L).coerceAtLeast(1L)
+                    port.hint("CP読取待機中 (残り約${remainingSec}秒)")
+                    schedule(800L)
+                    return
+                }
+            } else {
+                cpWaitStartedAt = -1L
+                retries++
+                if (retries < MAX_ATTEMPTS) {
+                    stage = Stage.READING
+                    validationDeadline = now() + 7_000L
+                    port.hint("同じ個体を再読取中 ($retries/$MAX_ATTEMPTS)")
+                    schedule(800L + retries * 400L)
+                    return
+                }
+                if (outcome.phase != OverlayIvProcessor.Phase.REVIEW || outcome.displayIv == null) {
+                    stop("取得・解析エラーが続いたため停止しました。保留タグは変更していません", StopReason.READ_FAILED)
+                    return
+                }
             }
             val cpMissing = outcome.cpMissing
-            if (!cpMissing && (outcome.phase != OverlayIvProcessor.Phase.REVIEW || outcome.displayIv == null)) {
-                stop("取得・解析エラーが続いたため停止しました。保留タグは変更していません", StopReason.READ_FAILED)
-                return
-            }
             if (cpMissing) {
                 holdState = HoldState.CP_MISSING
                 if (!port.holdStatus(recordId, holdState)) {
@@ -322,6 +341,7 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
                 holdResult = result
                 candidate = null
                 appraisalOpens = 0
+                cpWaitStartedAt = -1L
                 holdFinishedAt = now()
                 mismatch = null
                 validationDeadline = now() + 12_000L
@@ -332,12 +352,13 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
         }
         saved++
         port.saved(recordId)
+        cpWaitStartedAt = -1L
         holdState = HoldState.NONE
         if (checkpoint(current, completed = true)) advance(current)
     }
     companion object {
         const val MAX_ATTEMPTS = 3
-        private const val MAX_CP_ATTEMPTS = 2
+        const val CP_WAIT_TIMEOUT_MS = 30_000L
         private const val MAX_APPRAISAL_OPENS = 3
         private const val APPRAISAL_WAIT_TIMEOUT_MS = 10_000L
         private const val MOVE_FRAME_TIMEOUT_MS = 12_000L
