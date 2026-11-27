@@ -374,8 +374,8 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
     companion object {
         const val MAX_ATTEMPTS = 3
         const val CP_WAIT_TIMEOUT_MS = 30_000L
-        private const val MAX_APPRAISAL_OPENS = 6
-        private const val APPRAISAL_WAIT_TIMEOUT_MS = 15_000L
+        private const val MAX_APPRAISAL_OPENS = 3
+        private const val APPRAISAL_WAIT_TIMEOUT_MS = 10_000L
         private const val MOVE_FRAME_TIMEOUT_MS = 12_000L
     }
     private fun advance(current:Frame) {
