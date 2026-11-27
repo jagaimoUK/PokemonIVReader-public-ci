@@ -31,6 +31,7 @@ internal class ReaderResumePopup(private val context: Context) {
     fun showBoxResume(
         state: BoxReverseCheckpoint.State,
         stopReasonText: String,
+        stopLog: String? = null,
         onResume: (BoxReverseCheckpoint.State) -> Unit,
         onSkip: (() -> BoxReverseCheckpoint.State?)? = null,
     ) {
@@ -71,7 +72,7 @@ internal class ReaderResumePopup(private val context: Context) {
             textSize = 13f
             gravity = Gravity.CENTER
             minHeight = dp(40)
-            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             setTextColor(Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             background = rounded(Color.rgb(46, 139, 87), 12)
@@ -81,11 +82,11 @@ internal class ReaderResumePopup(private val context: Context) {
             }
         }
         skipBtn = TextView(context).apply {
-            text = "1体スキップ"
+            text = "スキップ"
             textSize = 12f
             gravity = Gravity.CENTER
             minHeight = dp(40)
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
             setTextColor(Color.rgb(232, 242, 233))
             background = rounded(Color.rgb(73, 99, 86), 12)
             setOnClickListener {
@@ -93,18 +94,20 @@ internal class ReaderResumePopup(private val context: Context) {
                 if (next != null) bind(next) else dismiss()
             }
         }
+        val copyBtn = if (!stopLog.isNullOrBlank()) copyLogButton(stopLog) else null
         val closeBtn = TextView(context).apply {
             text = "閉じる"
             textSize = 12f
             gravity = Gravity.CENTER
             minHeight = dp(40)
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
             setTextColor(Color.rgb(200, 214, 206))
             background = rounded(Color.rgb(58, 76, 68), 12)
             setOnClickListener { dismiss() }
         }
-        actions.addView(resumeBtn, LinearLayout.LayoutParams(0, -2, 1.5f))
-        actions.addView(skipBtn, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(6) })
+        actions.addView(resumeBtn, LinearLayout.LayoutParams(0, -2, 1.4f))
+        actions.addView(skipBtn, LinearLayout.LayoutParams(0, -2, 0.9f).apply { marginStart = dp(6) })
+        if (copyBtn != null) actions.addView(copyBtn, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) })
         actions.addView(closeBtn, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) })
         container.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
 
@@ -115,6 +118,7 @@ internal class ReaderResumePopup(private val context: Context) {
     fun showAutoScanResume(
         savedCount: Int,
         stopMessage: String,
+        stopLog: String? = null,
         onResume: () -> Unit,
     ) {
         if (!Settings.canDrawOverlays(context)) return
@@ -144,7 +148,7 @@ internal class ReaderResumePopup(private val context: Context) {
             textSize = 13f
             gravity = Gravity.CENTER
             minHeight = dp(40)
-            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             setTextColor(Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             background = rounded(Color.rgb(46, 139, 87), 12)
@@ -153,6 +157,54 @@ internal class ReaderResumePopup(private val context: Context) {
                 onResume()
             }
         }
+        val copyBtn = if (!stopLog.isNullOrBlank()) copyLogButton(stopLog) else null
+        val closeBtn = TextView(context).apply {
+            text = "閉じる"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            minHeight = dp(40)
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setTextColor(Color.rgb(200, 214, 206))
+            background = rounded(Color.rgb(58, 76, 68), 12)
+            setOnClickListener { dismiss() }
+        }
+        actions.addView(resumeBtn, LinearLayout.LayoutParams(0, -2, 1f))
+        if (copyBtn != null) actions.addView(copyBtn, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) })
+        actions.addView(closeBtn, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) })
+        container.addView(titleView)
+        container.addView(guideView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
+        container.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        attachBottom(container)
+    }
+
+    fun showStopLogOnly(
+        title: String,
+        message: String,
+        stopLog: String,
+    ) {
+        if (!Settings.canDrawOverlays(context)) return
+        dismiss()
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = rounded(Color.argb(238, 34, 49, 42), 16)
+        }
+        val titleView = TextView(context).apply {
+            text = title
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        val guideView = TextView(context).apply {
+            text = message
+            textSize = 12f
+            setTextColor(Color.rgb(214, 232, 222))
+        }
+        val actions = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        val copyBtn = copyLogButton(stopLog)
         val closeBtn = TextView(context).apply {
             text = "閉じる"
             textSize = 12f
@@ -163,7 +215,7 @@ internal class ReaderResumePopup(private val context: Context) {
             background = rounded(Color.rgb(58, 76, 68), 12)
             setOnClickListener { dismiss() }
         }
-        actions.addView(resumeBtn, LinearLayout.LayoutParams(0, -2, 1f))
+        actions.addView(copyBtn, LinearLayout.LayoutParams(0, -2, 1f))
         actions.addView(closeBtn, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) })
         container.addView(titleView)
         container.addView(guideView, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
@@ -171,9 +223,25 @@ internal class ReaderResumePopup(private val context: Context) {
         attachBottom(container)
     }
 
+    private fun copyLogButton(stopLog: String) = TextView(context).apply {
+        text = "ログコピー"
+        textSize = 12f
+        gravity = Gravity.CENTER
+        minHeight = dp(40)
+        setPadding(dp(8), dp(6), dp(8), dp(6))
+        setTextColor(Color.WHITE)
+        background = rounded(Color.rgb(66, 98, 128), 12)
+        setOnClickListener {
+            runCatching {
+                ClipboardCopy.write(context, "読み取り停止ログ", stopLog)
+                android.widget.Toast.makeText(context, "停止ログをコピーしました", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun attachBottom(view: View) {
         val screenWidth = context.resources.displayMetrics.widthPixels
-        val width = (screenWidth - dp(24)).coerceAtMost(dp(360))
+        val width = (screenWidth - dp(24)).coerceAtMost(dp(380))
         val params = WindowManager.LayoutParams(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,

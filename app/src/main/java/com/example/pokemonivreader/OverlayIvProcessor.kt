@@ -149,11 +149,18 @@ internal object OverlayIvProcessor {
             finish(Outcome("個体値の保存に失敗",false,displayIvText));return@execute
         }
         try {
-            cpFramesTransferred = true
+            val recognitionCpFrames = if (cpOverride != null) {
+                cpFrames.forEach { if (!it.isRecycled) it.recycle() }
+                emptyList()
+            } else {
+                cpFramesTransferred = true
+                cpFrames
+            }
             ScreenTextRecognizer.recognize(nameCrop, cpCrop, typeCrop, shadowCrop, cpFallback, heightCrop,
-                cpFrames = cpFrames,
+                cpFrames = recognitionCpFrames,
                 needsTypes = { name -> PumpkinForms.familyFromText(name) == null &&
                     PokemonCatalog.get(context).recognize(name, observedGender=genderReading.gender).species==null },
+                cpOverride = cpOverride,
                 cpReady = { cp ->
                     observedCp=cp
                     onProgress(Outcome(if(cp==null) "CPを複数フレームで確認中" else "CPを認識しました",false,displayIvText,cp,Phase.CP_READY))

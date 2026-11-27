@@ -349,17 +349,23 @@ class ScreenCaptureService : Service() {
                         val expected=expectedScene
                         val automatic = automaticCaptures[id]
                         if(id!=0L && expected!=null && signature!=null && expected.same(signature)) {
-                            val extraFrames = cpFrames.snapshot(now,signature)
-                            val enoughFrames = extraFrames.size >= 2 || now-started >= 600L
-                            extraFrames.forEach { it.recycle() }
-                            if(!enoughFrames) {
-                                capturePending.set(true)
-                                return@setOnImageAvailableListener
+                            val knownBoxCp = automatic?.cpOverride != null
+                            val captureCpFrames = if (knownBoxCp) {
+                                emptyList()
+                            } else {
+                                val extraFrames = cpFrames.snapshot(now,signature)
+                                val enoughFrames = extraFrames.size >= 2 || now-started >= 600L
+                                extraFrames.forEach { it.recycle() }
+                                if(!enoughFrames) {
+                                    capturePending.set(true)
+                                    return@setOnImageAvailableListener
+                                }
+                                cpFrames.snapshot(now,signature)
                             }
                             val samples=shadowBurst.latest()
                             val capturedShadowMode = activeShadowMode
                             try {
-                                OverlayIvProcessor.process(this,image,samples,cpFrames=cpFrames.snapshot(now,signature),
+                                OverlayIvProcessor.process(this,image,samples,cpFrames=captureCpFrames,
                                     scanModeOverride=capturedShadowMode,
                                     recordIdOverride=automatic?.recordId,
                                     cpOverride=automatic?.cpOverride,
@@ -1007,8 +1013,11 @@ class ScreenCaptureService : Service() {
                     ReaderWebTransfer.automate(this)
             }
             if (lastStopReason != ReaderAutoScan.StopReason.NO_MOVE && checkpoint.load() != null) {
+                val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", java.util.Locale.US)
+                    .format(java.util.Date())
+                val stopLog = "$ts / STOP / AUTO_SCAN / ${lastStopReason?.name ?: "UNKNOWN"} / 自動=$automation / 保存数=$lastStopSaved / $message"
                 val popup = resumePopup ?: ReaderResumePopup(this).also { resumePopup = it }
-                popup.showAutoScanResume(lastStopSaved, message) {
+                popup.showAutoScanResume(lastStopSaved, message, stopLog) {
                     startAutomaticReading(
                         automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this),
                         resume = true
@@ -1183,43 +1192,66 @@ class ScreenCaptureService : Service() {
                 boxCheckpoint.clear()
             }
             override fun hint(message: String) { updateNotification(message) }
-        }) { message, completed ->
-            autoReading = false; boxReverseScan = null; automaticFrame = null
-            boxPageRequest = null
-            captureGate.clear(); previousScene = null; cpFrames.clear()
-            automaticCaptures.clear()
-            readerControl?.close(); readerControl = null
-            shadowOverlayRoot?.visibility = android.view.View.VISIBLE
-            showScanResult(message, false)
-            if (automation) {
-                session.pauseReading()
-                if (completed && session.records().isNotEmpty()) {
-                    ReaderWebTransfer.automate(this)
-                }
+            private var lastStage: BoxReverseAutoScan.Stage? = null
+            private var lastReason: BoxReverseAutoScan.StopReason? = null
+            private var lastSaved = 0
+            private var lastCollected = 0
+            override fun stopped(stage: BoxReverseAutoScan.Stage, reason: BoxReverseAutoScan.StopReason, saved: Int, collectedCps: Int) {
+                lastStage = stage
+                lastReason = reason
+                lastSaved = saved
+                lastCollected = collectedCps
             }
-            if (!completed) {
-                val savedBox = boxCheckpoint.load()
-                if (savedBox != null) {
+            fun formatStopLog(message: String, savedBox: BoxReverseCheckpoint.State?): String {
+                val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", java.util.Locale.US)
+                    .format(java.util.Date())
+                val progress = savedBox?.let { "残=${it.remaining}/${it.total} / 次=${it.nextTargetLabel()}" }
+                    ?: "収集CP=$lastCollected"
+                return "$ts / STOP / BOX_REVERSE / ${lastStage?.name ?: "?"} / ${lastReason?.name ?: "?"} / 自動=$automation / 保存数=$lastSaved / $progress / $message"
+            }
+        }.let { port ->
+            boxReverseScan = BoxReverseAutoScan(main, port) { message, completed ->
+                autoReading = false; boxReverseScan = null; automaticFrame = null
+                boxPageRequest = null
+                captureGate.clear(); previousScene = null; cpFrames.clear()
+                automaticCaptures.clear()
+                readerControl?.close(); readerControl = null
+                shadowOverlayRoot?.visibility = android.view.View.VISIBLE
+                showScanResult(message, false)
+                if (automation) {
+                    session.pauseReading()
+                    if (completed && session.records().isNotEmpty()) {
+                        ReaderWebTransfer.automate(this)
+                    }
+                }
+                if (!completed) {
+                    val savedBox = boxCheckpoint.load()
+                    val stopLog = port.formatStopLog(message, savedBox)
                     val popup = resumePopup ?: ReaderResumePopup(this).also { resumePopup = it }
-                    popup.showBoxResume(
-                        state = savedBox,
-                        stopReasonText = message,
-                        onResume = { resumeTarget -> startBoxReverseReading(resumeTarget.toResumeState()) },
-                        onSkip = {
-                            val current = boxCheckpoint.load() ?: return@showBoxResume null
-                            val next = current.skipped()
-                            if (next != null) {
-                                boxCheckpoint.save(next)
-                                next
-                            } else {
-                                boxCheckpoint.clear()
-                                null
+                    if (savedBox != null) {
+                        popup.showBoxResume(
+                            state = savedBox,
+                            stopReasonText = message,
+                            stopLog = stopLog,
+                            onResume = { resumeTarget -> startBoxReverseReading(resumeTarget.toResumeState()) },
+                            onSkip = {
+                                val current = boxCheckpoint.load() ?: return@showBoxResume null
+                                val next = current.skipped()
+                                if (next != null) {
+                                    boxCheckpoint.save(next)
+                                    next
+                                } else {
+                                    boxCheckpoint.clear()
+                                    null
+                                }
                             }
-                        }
-                    )
+                        )
+                    } else {
+                        popup.showStopLogOnly("ボックス読取 停止", message, stopLog)
+                    }
                 }
-            }
-        }.also { it.start(resumeState) }
+            }.also { it.start(resumeState) }
+        }
     }
 
     private fun overlayOverlapsCrop(): Boolean {
