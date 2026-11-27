@@ -18,6 +18,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -76,6 +77,8 @@ class ReaderIndividualQueueHandoffTest {
         add("oinkologne_female", 916, "パフュートン", "oinkologne_female", "Oinkologne", "Oinkologne (Female)")
         add("mankey", 56, "マンキー", "normal", "Mankey", "mankey")
         add("annihilape", 979, "コノヨザル", "normal", "Annihilape", "annihilape")
+        add("sableye", 302, "ヤミラミ", "normal", "Sableye", "sableye")
+        add("altaria", 334, "チルタリス", "normal", "Altaria", "altaria")
         return PokemonCatalog(rows)
     }
 
@@ -90,12 +93,20 @@ class ReaderIndividualQueueHandoffTest {
         nickRev: Int = 0,
         memo: String = "",
         memoRev: Int = 0,
+        targetName: String? = null,
+        evaluatedSpeciesId: String? = null,
+        megaLevel: Int? = null,
+        charged3: String? = null,
     ): JSONObject {
         val individual = JSONObject()
             .put("instance_id", id)
             .put("species_id", speciesId)
             .put("current_cp", cp ?: JSONObject.NULL)
             .put("ivs", JSONObject().put("attack", atk).put("defense", def).put("hp", hp))
+        if (targetName != null) individual.put("target_name", targetName)
+        if (evaluatedSpeciesId != null) individual.put("evaluated_species_id", evaluatedSpeciesId)
+        if (megaLevel != null) individual.put("mega_level", megaLevel)
+        if (charged3 != null) individual.put("charged3", charged3)
         return JSONObject()
             .put("individual", individual)
             .put(
@@ -382,6 +393,78 @@ class ReaderIndividualQueueHandoffTest {
         val decision = ReaderIndividualQueueHandoff.evaluate(syncStore, "anni-1", catalog)
         assertTrue(decision is ReaderIndividualQueueHandoff.Decision.Ready)
         assertEquals("Annihilape", (decision as ReaderIndividualQueueHandoff.Decision.Ready).prepared.pair.targetName)
+    }
+
+    @Test fun megaTargetRecognizedInQueueHandoffAndPreservesAttributesWithoutAlteringSearchOrTag() {
+        // 1. Direct target_name in individual snapshot
+        syncStore.pair(
+            "mega-sab-1",
+            "synthetic-code",
+            snapshot(
+                id = "mega-sab-1",
+                speciesId = "sableye",
+                cp = 750,
+                atk = 0,
+                def = 15,
+                hp = 15,
+                nick = "MSab01",
+                nickRev = 1,
+                targetName = "メガヤミラミ",
+                megaLevel = 3,
+                charged3 = "FOUL_PLAY",
+            )
+        )
+        val decision1 = ReaderIndividualQueueHandoff.evaluate(syncStore, "mega-sab-1", catalog)
+        assertTrue(decision1 is ReaderIndividualQueueHandoff.Decision.Ready)
+        val ready1 = (decision1 as ReaderIndividualQueueHandoff.Decision.Ready).prepared
+        assertEquals("メガヤミラミ", ready1.pair.targetName)
+        assertEquals(3, ready1.pair.megaLevel)
+        assertEquals("FOUL_PLAY", ready1.pair.charged3)
+        // Search text contains only base species and IV/CP filters, NEVER mega search keywords
+        assertEquals("Sableye&0attack&4defense&4hp&cp750&!shadow", ready1.pair.searchText)
+        assertFalse(ready1.pair.searchText.contains("mega", ignoreCase = true))
+        assertFalse(ready1.pair.searchText.contains("メガ"))
+        // Tag policy stays "prev" (never changed to a custom mega tag)
+        assertEquals("prev", com.example.pokemonivreader.overlayqueue.SelectionTagPolicy.tagForTarget(ready1.pair.targetName))
+
+        // 2. Evaluated species ID (sableye_mega) resolved automatically to メガヤミラミ
+        syncStore.pair(
+            "mega-sab-2",
+            "synthetic-code",
+            snapshot(
+                id = "mega-sab-2",
+                speciesId = "sableye",
+                cp = 750,
+                atk = 0,
+                def = 15,
+                hp = 15,
+                nick = "MSab02",
+                nickRev = 1,
+                evaluatedSpeciesId = "sableye_mega",
+                megaLevel = 2,
+            )
+        )
+        val decision2 = ReaderIndividualQueueHandoff.evaluate(syncStore, "mega-sab-2", catalog)
+        assertTrue(decision2 is ReaderIndividualQueueHandoff.Decision.Ready)
+        val ready2 = (decision2 as ReaderIndividualQueueHandoff.Decision.Ready).prepared
+        assertEquals("メガヤミラミ", ready2.pair.targetName)
+        assertEquals(2, ready2.pair.megaLevel)
+        assertEquals("sableye_mega", ready2.pair.targetSpecies)
+        assertEquals("prev", com.example.pokemonivreader.overlayqueue.SelectionTagPolicy.tagForTarget(ready2.pair.targetName))
+
+        // 3. Enqueue to overlay queue store and verify presentation group title uses mega target name
+        val enqueueResult = ReaderIndividualQueueHandoff.enqueue(syncStore, "mega-sab-1", catalog, queueStore)
+        assertTrue(enqueueResult is ReaderIndividualQueueHandoff.EnqueueResult.Queued)
+        val queued = enqueueResult as ReaderIndividualQueueHandoff.EnqueueResult.Queued
+        assertEquals("メガヤミラミ", queued.item.targetName)
+
+        val items = queueStore.items(id = queued.sessionId, filter = OverlayQueueStore.Filter.ALL)
+        val steps = com.example.pokemonivreader.overlayqueue.OverlayQueuePresentation.build(items)
+        val individualStep = steps.firstOrNull { it.item != null }
+        assertNotNull(individualStep)
+        assertEquals("メガヤミラミ", individualStep!!.target)
+        // Group heading does NOT fall back to "Sableye（進化先情報なし）"
+        assertFalse(individualStep.target.contains("進化先情報なし"))
     }
 
     @Test fun confirmedSyncedNicknameCompletesAcrossNameAndTagInterruptionsWithoutDoubleMutation() {

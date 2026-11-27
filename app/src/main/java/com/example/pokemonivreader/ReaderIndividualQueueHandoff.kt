@@ -7,6 +7,7 @@ import com.example.pokemonivreader.overlayqueue.OverlayPair
 import com.example.pokemonivreader.overlayqueue.OverlayQueueStore
 import com.example.pokemonivreader.overlayqueue.SelectionTagPolicy
 import java.util.Locale
+import org.json.JSONObject
 
 /**
  * Fail-closed bridge from confirmed individual sync records to the GO automation queue.
@@ -114,14 +115,28 @@ internal object ReaderIndividualQueueHandoff {
         val speciesId = individual.getString("species_id")
         val search = buildIndividualSearch(speciesId, atk, def, hp, cp, catalog)
             ?: return Decision.Blocked("図鑑に一致する種族・フォルムの個体検索式を作成できないため停止しました")
-        val targetName = explicitTargetName(speciesId)
+        val targetName = resolveTargetName(speciesId, individual, catalog)
         if (SelectionTagPolicy.ambiguousMankeySource(search, targetName)) {
             return Decision.Blocked("マンキー系統は進化先が未確定のため自動整理へ引き渡せません")
         }
+        val megaLevel = if (individual.isNull("mega_level")) null else individual.optInt("mega_level").takeIf { it in 1..4 }
+        val charged3 = individual.optString("charged3").takeIf { it.isNotBlank() }
+        val superMaxStatus = individual.optString("super_max_pl_hypothesis_status").takeIf { it.isNotBlank() }
+        val targetSpecies = individual.optString("evaluated_species_id").takeIf { it.isNotBlank() }
+            ?: individual.optString("target_species").takeIf { it.isNotBlank() }
         return Decision.Ready(
             Prepared(
                 instanceId = id,
-                pair = OverlayPair(search, nickname, "$atk/$def/$hp", targetName),
+                pair = OverlayPair(
+                    searchText = search,
+                    nickname = nickname,
+                    ivs = "$atk/$def/$hp",
+                    targetName = targetName,
+                    megaLevel = megaLevel,
+                    charged3 = charged3,
+                    targetSpecies = targetSpecies,
+                    superMaxHypothesisStatus = superMaxStatus,
+                ),
                 nicknameRevision = nicknameRev,
             )
         )
@@ -269,6 +284,59 @@ internal object ReaderIndividualQueueHandoff {
         if (GoWorkflowPolicy.expectedCp(search) != cp) return null
         if (GoWorkflowPolicy.expectedSpecies(search) == null) return null
         return search
+    }
+
+    internal fun resolveTargetName(
+        rawSpeciesId: String,
+        individual: JSONObject,
+        catalog: PokemonCatalog,
+    ): String? {
+        val direct = individual.optString("target_name").trim()
+            .ifEmpty { individual.optString("targetName").trim() }
+        if (direct.isNotEmpty()) return direct
+
+        val evaluated = individual.optString("evaluated_species_id").trim()
+            .ifEmpty { individual.optString("target_species").trim() }
+        if (evaluated.isNotEmpty()) {
+            val megaName = formatMegaTargetName(evaluated, catalog)
+            if (megaName != null) return megaName
+            val targetSpecies = catalog.findById(evaluated)
+            if (targetSpecies != null) return targetSpecies.displayName
+        }
+
+        val megaLevel = if (individual.isNull("mega_level")) null else individual.optInt("mega_level")
+        if (megaLevel != null && megaLevel in 1..4) {
+            val baseId = rawSpeciesId.trim().lowercase(Locale.ROOT).removeSuffix("_shadow")
+            val baseSpecies = catalog.findById(baseId)
+            if (baseSpecies != null) return "メガ${baseSpecies.japanese}"
+        }
+
+        return explicitTargetName(rawSpeciesId)
+    }
+
+    internal fun formatMegaTargetName(targetSpeciesId: String, catalog: PokemonCatalog): String? {
+        val normalized = targetSpeciesId.trim().lowercase(Locale.ROOT)
+        val isMegaX = normalized.endsWith("_mega_x")
+        val isMegaY = normalized.endsWith("_mega_y")
+        val isMega = normalized.endsWith("_mega")
+        val isPrimal = normalized.endsWith("_primal")
+        if (!isMegaX && !isMegaY && !isMega && !isPrimal) return null
+
+        val baseId = when {
+            isMegaX -> normalized.removeSuffix("_mega_x")
+            isMegaY -> normalized.removeSuffix("_mega_y")
+            isMega -> normalized.removeSuffix("_mega")
+            isPrimal -> normalized.removeSuffix("_primal")
+            else -> normalized
+        }
+        val baseSpecies = catalog.findById(baseId) ?: return null
+        val baseJa = baseSpecies.japanese
+        return when {
+            isPrimal -> "ゲンシ$baseJa"
+            isMegaX -> "メガ${baseJa}X"
+            isMegaY -> "メガ${baseJa}Y"
+            else -> "メガ$baseJa"
+        }
     }
 
     private fun explicitTargetName(rawSpeciesId: String): String? {
