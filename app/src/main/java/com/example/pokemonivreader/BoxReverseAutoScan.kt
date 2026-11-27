@@ -62,6 +62,7 @@ internal class BoxReverseAutoScan(
     private var boxReadRetries = 0
     private var detailRetries = 0
     private var appraisalOpens = 0
+    private var swipeRetries = 0
 
     private var scrollBaseline: ReaderAutoScan.Frame? = null
     private var detailBaseline: ReaderAutoScan.Frame? = null
@@ -296,6 +297,7 @@ internal class BoxReverseAutoScan(
                         detailBaseline = frame
                         recordId = java.util.UUID.randomUUID().toString()
                         detailRetries = 0
+                        swipeRetries = 0
                         captureCurrentDetail(frame)
                     } else {
                         if (prev == null || !prev.signature.same(frame.signature)) candidate = frame
@@ -305,7 +307,30 @@ internal class BoxReverseAutoScan(
                     candidate = null
                     if (unchangedAt == 0L) unchangedAt = frame.at
                     if (frame.at - unchangedAt >= 1400L && now() - actionAt >= 1800L) {
-                        stop("先頭まで逆順読み取りを完了しました", StopReason.COMPLETED)
+                        if (cpIndex < 0) {
+                            stop("先頭まで逆順読み取りを完了しました", StopReason.COMPLETED)
+                        } else if (swipeRetries < MAX_SWIPE_RETRIES) {
+                            swipeRetries++
+                            stage = Stage.SWIPE_PREV
+                            busy = true
+                            port.hint("右スワイプを再試行中 ($swipeRetries/$MAX_SWIPE_RETRIES)")
+                            port.swipeRight { ok ->
+                                if (stage != Stage.SWIPE_PREV) return@swipeRight
+                                busy = false
+                                if (!ok) {
+                                    stop("右スワイプを実行できませんでした", StopReason.SWIPE_FAILED)
+                                    return@swipeRight
+                                }
+                                actionAt = now()
+                                unchangedAt = 0L
+                                candidate = null
+                                stage = Stage.WAIT_PREV
+                                schedule(400L)
+                            }
+                            if (busy) schedule()
+                        } else {
+                            stop("右スワイプ後の移動を確認できません（残 ${cpIndex + 1}体）", StopReason.SWIPE_FAILED)
+                        }
                     } else {
                         schedule()
                     }
@@ -380,6 +405,7 @@ internal class BoxReverseAutoScan(
             }
             runCatching { port.saveCheckpoint(ResumeState(collectedCps, cpIndex, saved, lastTapPoint)) }
             detailBaseline = current
+            swipeRetries = 0
             stage = Stage.SWIPE_PREV
             busy = true
             port.swipeRight { ok ->
@@ -402,6 +428,7 @@ internal class BoxReverseAutoScan(
 
     companion object {
         private const val MAX_RETRIES = 3
+        private const val MAX_SWIPE_RETRIES = 2
         private const val MAX_APPRAISAL_OPENS = 7
         private const val SCROLL_TIMEOUT_MS = 10_000L
         private const val DETAIL_TIMEOUT_MS = 15_000L
