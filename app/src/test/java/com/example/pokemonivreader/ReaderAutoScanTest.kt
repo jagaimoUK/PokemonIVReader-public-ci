@@ -31,6 +31,7 @@ class ReaderAutoScanTest {
         var frozenAt: Long? = null
         var signature = CaptureGate.Signature(IntArray(400) { 0xff000000.toInt() })
         var swipeAccepted = true
+        var completeOpen = true
         var swipeCallback: ((Boolean) -> Unit)? = null
         var completeSwipe = true
         var holdOk=true
@@ -61,7 +62,7 @@ class ReaderAutoScanTest {
         var completion: ((OverlayIvProcessor.Outcome) -> Unit)? = null
         override fun foreground() = foreground
         override fun frame() = if (hasFrame) ReaderAutoScan.Frame(signature, frozenAt ?: SystemClock.elapsedRealtime(), appraisal) else null
-        override fun openAppraisal(result: (Boolean) -> Unit) { opens++; result(true) }
+        override fun openAppraisal(result: (Boolean) -> Unit) { opens++; if (completeOpen) result(true) }
         override fun capture(recordId: String, result: (OverlayIvProcessor.Outcome) -> Unit) { ids += recordId; completion = result }
         override fun swipeLeft(result: (Boolean) -> Unit) { swipes++; swipeCallback = result; if (completeSwipe) result(swipeAccepted) }
         override fun hint(message: String) {}
@@ -75,6 +76,47 @@ class ReaderAutoScanTest {
     private fun advance(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))
     private fun start(fake: Fake, done: (String) -> Unit = {}): ReaderAutoScan =
         ReaderAutoScan(Handler(Looper.getMainLooper()), fake, done).also { it.start(); advance(650) }
+
+    @Test fun unrecognizedAppraisalStopsAfterBoundedOpenAttempts() {
+        val fake = Fake().apply { appraisal = false }
+        start(fake)
+        advance(6_000)
+        assertEquals(3, fake.opens)
+        assertEquals(ReaderAutoScan.StopReason.FRAME_UNAVAILABLE, fake.stopEvents.single().second)
+        assertTrue(fake.ids.isEmpty())
+        assertEquals(0, fake.swipes)
+        assertEquals(0, fake.holds)
+    }
+
+    @Test fun absentFrameWaitsWithoutTappingAndStopsSafely() {
+        val fake = Fake().apply { hasFrame = false }
+        start(fake)
+        advance(11_000)
+        assertEquals(0, fake.opens)
+        assertEquals(ReaderAutoScan.StopReason.FRAME_UNAVAILABLE, fake.stopEvents.single().second)
+        assertTrue(fake.ids.isEmpty())
+        assertEquals(0, fake.swipes)
+    }
+
+    @Test fun missingAccessibilityCallbackDoesNotHangForever() {
+        val fake = Fake().apply { appraisal = false; completeOpen = false }
+        start(fake)
+        advance(11_000)
+        assertEquals(1, fake.opens)
+        assertEquals(ReaderAutoScan.StopReason.FRAME_UNAVAILABLE, fake.stopEvents.single().second)
+        assertEquals(0, fake.swipes)
+    }
+
+    @Test fun staleFramesAfterSwipeStopAsUnavailableNotEndOfList() {
+        val fake = Fake()
+        start(fake)
+        fake.finish(OverlayIvProcessor.Phase.SAVED)
+        fake.hasFrame = false
+        advance(13_000)
+        assertEquals(1, fake.swipes)
+        assertEquals(ReaderAutoScan.StopReason.FRAME_UNAVAILABLE, fake.stopEvents.single().second)
+        assertEquals(1, fake.ids.size)
+    }
 
     @Test fun unreadableCpIsRetriedOnceThenMovesOnlyAfterTagAndAppraisalAreVerified() {
         val fake=Fake().apply { completeHold=false }
