@@ -1160,7 +1160,7 @@ class ScreenCaptureService : Service() {
         autoReading = true; automaticFrame = null
         captureGate.clear(); previousScene = null; cpFrames.clear()
         shadowOverlayRoot?.visibility = android.view.View.INVISIBLE
-        boxReverseScan = BoxReverseAutoScan(main, object : BoxReverseAutoScan.Port {
+        val port = object : BoxReverseAutoScan.Port {
             override fun foreground() = projection != null && control.foreground()
             override fun frame() = automaticFrame
             override fun readBoxPage(result: (BoxReverseAutoScan.BoxPageResult) -> Unit) {
@@ -1209,8 +1209,8 @@ class ScreenCaptureService : Service() {
                     ?: "収集CP=$lastCollected"
                 return "$ts / STOP / BOX_REVERSE / ${lastStage?.name ?: "?"} / ${lastReason?.name ?: "?"} / 自動=$automation / 保存数=$lastSaved / $progress / $message"
             }
-        }.let { port ->
-            boxReverseScan = BoxReverseAutoScan(main, port) { message, completed ->
+        }
+        boxReverseScan = BoxReverseAutoScan(main, port) { message, completed ->
                 autoReading = false; boxReverseScan = null; automaticFrame = null
                 boxPageRequest = null
                 captureGate.clear(); previousScene = null; cpFrames.clear()
@@ -1250,8 +1250,7 @@ class ScreenCaptureService : Service() {
                         popup.showStopLogOnly("ボックス読取 停止", message, stopLog)
                     }
                 }
-            }.also { it.start(resumeState) }
-        }
+        }.also { it.start(resumeState) }
     }
 
     private fun overlayOverlapsCrop(): Boolean {
