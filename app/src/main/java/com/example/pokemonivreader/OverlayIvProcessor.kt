@@ -21,7 +21,8 @@ internal object OverlayIvProcessor {
                        val displayCp: Int? = null, val phase: Phase = if(added) Phase.SAVED else Phase.FAILED,
                        val recordId: String = "", val cpCandidates: List<Int> = emptyList(),
                        val formCandidates: List<Pair<String,String>> = emptyList(),
-                       val cpMissing: Boolean = false)
+                       val cpMissing: Boolean = false,
+                       val speciesName: String? = null)
     internal var worker: java.util.concurrent.Executor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r,"IvReaderStorage").apply { isDaemon=true }
     }
@@ -36,7 +37,9 @@ internal object OverlayIvProcessor {
                 shadowProvider: () -> List<ShadowRecognizer.Evidence> = { shadowFrames },
                 onCaptured: () -> Unit = {}, onProgress: (Outcome) -> Unit = {},
                 scanModeOverride: ShadowRecognizer.Mode? = null,
-                recordIdOverride: String? = null, done: (Outcome) -> Unit) {
+                recordIdOverride: String? = null,
+                cpOverride: Int? = null,
+                done: (Outcome) -> Unit) {
         var observedCp: Int? = null
         var cpFramesTransferred = false
         fun finish(outcome: Outcome) {
@@ -167,7 +170,9 @@ internal object OverlayIvProcessor {
                     record.put("shadowDecision", decision.diagnostic)
                     record.put("shadowSuggestion", if (aura.suggestedShadow) "SHADOW" else "")
                     record.put("shadowEvidence", decision.diagnostic + " / " + aura.diagnostic)
-                    if (ocr.cp != null) record.put("cp", ocr.cp)
+                    val effectiveCp = cpOverride ?: ocr.cp
+                    if (effectiveCp != null) record.put("cp", effectiveCp)
+                    if (cpOverride != null) record.put("cpMethod", "box_grid")
                     record.put("cpCandidates", JSONArray(ocr.cpCandidates))
                     record.put("cpFramesRead", ocr.cpFramesRead)
                     record.put("nameCandidate", ocr.nameText)
@@ -228,13 +233,14 @@ internal object OverlayIvProcessor {
                         return saved
                     }
                     val species = resolution.species
+                    val resolvedSpeciesName = species?.displayName ?: ocr.nameText.trim().takeIf { it.isNotBlank() }
                     if (species != null) {
                         record.put("source", species.displayName)
                         record.put("sourceId", species.id)
                     }
-                    if (ocr.cp == null || species == null) {
+                    if (effectiveCp == null || species == null) {
                         val reason = listOfNotNull(
-                            if (ocr.cp == null) (if(ocr.cpCandidates.isEmpty()) "CP未認識" else "CP候補を確認してください") else null,
+                            if (effectiveCp == null) (if(ocr.cpCandidates.isEmpty()) "CP未認識" else "CP候補を確認してください") else null,
                             if (species == null) {
                                 if (ocr.nameText.isBlank()) ocr.diagnostic.ifBlank {
                                     "下側の捕獲文から名前を抽出できません"
@@ -244,13 +250,13 @@ internal object OverlayIvProcessor {
                         record.put("diagnostic", reason)
                         val updated = persist()
                         val note = if (updated) "要確認として仮保存" else "仮保存済み・更新失敗"
-                        return@recognize finish(Outcome("$ivText / $reason：$note", false, displayIvText, ocr.cp, Phase.REVIEW,
+                        return@recognize finish(Outcome("$ivText / $reason：$note", false, displayIvText, effectiveCp, Phase.REVIEW,
                             recordId, ocr.cpCandidates, if(species==null) candidates.map { it.id to it.displayName } else emptyList(),
-                            cpMissing = updated && ocr.cp == null))
+                            cpMissing = updated && effectiveCp == null, speciesName = resolvedSpeciesName))
                     }
                     // No ambiguity: valid IV, recognized species/form, and numeric CP.
                     val evaluation = catalog.evaluate(
-                        species, ocr.cp, intArrayOf(result.attack, result.defense, result.hp), shadow, genderReading.gender
+                        species, effectiveCp, intArrayOf(result.attack, result.defense, result.hp), shadow, genderReading.gender
                     )
                     record.put("targets", JSONArray(evaluation.eligible))
                     record.put("borderline", JSONArray(evaluation.borderline))
@@ -261,7 +267,7 @@ internal object OverlayIvProcessor {
                     record.put("diagnostic", catalog.rankingProblem)
                     val saved = persist()
                     if (!saved) {
-                        return@recognize finish(Outcome("$ivText / 正式登録への更新に失敗", false, displayIvText))
+                        return@recognize finish(Outcome("$ivText / 正式登録への更新に失敗", false, displayIvText, speciesName = resolvedSpeciesName))
                     }
                     val eligible = evaluation.eligible.joinToString("、")
                         .ifEmpty { catalog.rankingProblem.ifBlank { if (shadow == ShadowRecognizer.State.UNKNOWN) "判定が不一致のため再読取してください" else if (RankingEligibility.get(context).mode == RankingEligibility.Mode.ALL_SPECIES) "CP1500以下の候補なし" else "総合70以上・CP1500以下の候補なし" } }
@@ -271,7 +277,7 @@ internal object OverlayIvProcessor {
                     val sexNote = if (evaluation.genderPending.isNotEmpty()) " / 性別条件の未確認あり" else ""
                     val shadowLabel = if (shadow == ShadowRecognizer.State.SHADOW) "シャドウ" else
                         if (aura.suggestedShadow) "再読取が必要" else if (shadow == ShadowRecognizer.State.NORMAL) "通常" else "再読取が必要"
-                    finish(Outcome("$ivText | ${species.displayName} CP${ocr.cp} [$shadowLabel] → $eligible$uncertain$sexNote", true,
+                    finish(Outcome("$ivText | ${species.displayName} CP${effectiveCp} [$shadowLabel] → $eligible$uncertain$sexNote", true,
                             OverlayEligibilityBadge.decorate(
                                 displayIvText,
                                 OverlayEligibilityBadge.classify(
@@ -285,8 +291,9 @@ internal object OverlayIvProcessor {
                                     cpExcludedCount = evaluation.cpExcluded.size
                                 ),
                                 true
-                            ), ocr.cp,
-                        if(shadow==ShadowRecognizer.State.UNKNOWN || evaluation.genderPending.isNotEmpty() || !result.reliable) Phase.REVIEW else Phase.SAVED))
+                            ), effectiveCp,
+                        if(shadow==ShadowRecognizer.State.UNKNOWN || evaluation.genderPending.isNotEmpty() || !result.reliable) Phase.REVIEW else Phase.SAVED,
+                        speciesName = resolvedSpeciesName))
                 } catch (e: Exception) {
                     record.put("status", "pending")
                     record.put("targets", JSONArray())

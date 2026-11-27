@@ -261,6 +261,9 @@ class GoTextInputAccessibilityService : AccessibilityService() {
         fun openAppraisal(result: (Boolean) -> Unit)
         fun holdCurrent(expectedCp: Int?, appraisalVisible: (Long) -> Boolean?, result: (GoHoldWorkflow.Result) -> Unit)
         fun swipeLeft(result: (Boolean) -> Unit)
+        fun swipeRight(result: (Boolean) -> Unit)
+        fun scrollBoxDown(result: (Boolean) -> Unit)
+        fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit)
         fun close()
     }
 
@@ -363,6 +366,40 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                     lineTo(bounds.left + bounds.width() * .23f, y)
                 }
                 gesture(path, 400L, result)
+            }
+            override fun swipeRight(result: (Boolean) -> Unit) {
+                if (!foreground()) { result(false); return }
+                val bounds = Rect()
+                val window = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    (it.isFocused || it.isActive) && it.root?.packageName?.toString() == GO_PACKAGE }
+                window?.getBoundsInScreen(bounds)
+                if (bounds.isEmpty || bounds.width() >= bounds.height()) { result(false); return }
+                val y = bounds.top + bounds.height() * .42f
+                val path = Path().apply {
+                    moveTo(bounds.left + bounds.width() * .23f, y)
+                    lineTo(bounds.left + bounds.width() * .82f, y)
+                }
+                gesture(path, 400L, result)
+            }
+            override fun scrollBoxDown(result: (Boolean) -> Unit) {
+                if (!foreground()) { result(false); return }
+                val bounds = Rect()
+                val window = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    (it.isFocused || it.isActive) && it.root?.packageName?.toString() == GO_PACKAGE }
+                window?.getBoundsInScreen(bounds)
+                if (bounds.isEmpty || bounds.width() >= bounds.height()) { result(false); return }
+                val x = bounds.left + bounds.width() * .50f
+                val path = Path().apply {
+                    moveTo(x, bounds.top + bounds.height() * .74f)
+                    lineTo(x, bounds.top + bounds.height() * .30f)
+                }
+                gesture(path, 480L, result)
+            }
+            override fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit) {
+                if (!foreground()) { result(false); return }
+                val r = Rect((x - 8).toInt(), (y - 8).toInt(), (x + 8).toInt(), (y + 8).toInt())
+                if (OverlayCopyQueueController.isCovered(r)) { result(false); return }
+                gesture(Path().apply { moveTo(x, y) }, 60L, result)
             }
             override fun close() {
                 if (!current()) return

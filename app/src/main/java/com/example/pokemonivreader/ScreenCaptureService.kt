@@ -107,11 +107,15 @@ class ScreenCaptureService : Service() {
     } }
     private val captureGate = CaptureGate()
     private val pipeline = ScanPipeline(4)
-    private data class AutoCapture(val recordId: String, val done: (OverlayIvProcessor.Outcome) -> Unit)
+    private data class AutoCapture(val recordId: String, val cpOverride: Int? = null, val done: (OverlayIvProcessor.Outcome) -> Unit)
     private val automaticCaptures = java.util.concurrent.ConcurrentHashMap<Long, AutoCapture>()
     @Volatile private var autoReading = false
     @Volatile private var automaticFrame: ReaderAutoScan.Frame? = null
     private var autoScan: ReaderAutoScan? = null
+    private var boxReverseScan: BoxReverseAutoScan? = null
+    @Volatile private var boxPageRequest: Pair<DoubleArray, (BoxReverseAutoScan.BoxPageResult) -> Unit>? = null
+    private val suggestedSpeciesInSession = mutableSetOf<String>()
+    private var boxSuggestionDialog: AlertDialog? = null
     private val readerDiagnostics by lazy { ReaderDiagnostics(this) }
     private var readerControl: com.example.pokemonivreader.overlayqueue.GoTextInputAccessibilityService.ReaderControl? = null
     private fun finishAutomaticCapture(id: Long, outcome: OverlayIvProcessor.Outcome) {
@@ -321,6 +325,22 @@ class ScreenCaptureService : Service() {
                             OverlayIvProcessor.hasAppraisalBars(this, image, panelCoordinates))
                     }
                 }
+                val pendingBoxPage = boxPageRequest
+                if (pendingBoxPage != null) {
+                    boxPageRequest = null
+                    val (gridCoords, callback) = pendingBoxPage
+                    val l = (min(gridCoords[0], gridCoords[2]) * image.width).roundToInt().coerceIn(0, image.width - 1)
+                    val r = (max(gridCoords[0], gridCoords[2]) * image.width).roundToInt().coerceIn(l + 1, image.width)
+                    val t = (min(gridCoords[1], gridCoords[3]) * image.height).roundToInt().coerceIn(0, image.height - 1)
+                    val b = (max(gridCoords[1], gridCoords[3]) * image.height).roundToInt().coerceIn(t + 1, image.height)
+                    val gridBounds = android.graphics.Rect(l, t, r, b)
+                    val crop = OverlayIvProcessor.copyRegion(image, l, t, r - l, b - t)
+                    BoxGridCpReader.readRows(crop) { rows ->
+                        if (!crop.isRecycled) crop.recycle()
+                        val tap = BoxGridCpReader.lastCardTapPoint(rows, gridBounds)
+                        main.post { callback(BoxReverseAutoScan.BoxPageResult(rows, tap)) }
+                    }
+                }
                 if(capturePending.compareAndSet(true,false)) {
                     if(captureByOverlay) {
                         val id=activeCaptureId
@@ -341,6 +361,7 @@ class ScreenCaptureService : Service() {
                                 OverlayIvProcessor.process(this,image,samples,cpFrames=cpFrames.snapshot(now,signature),
                                     scanModeOverride=capturedShadowMode,
                                     recordIdOverride=automatic?.recordId,
+                                    cpOverride=automatic?.cpOverride,
                                     onCaptured={ releaseCapture(id) },
                                     onProgress={ progress -> main.post {
                                         if(!hasStopped && pipeline.isNewest(id)) showScanResult(progress,now-started)
@@ -360,6 +381,7 @@ class ScreenCaptureService : Service() {
                                                     previousScene?.let { expected.same(it) } == true) reviewInAppraisal(outcome)
                                             }
                                             else refreshReviewBadge()
+                                            handleDifficultSpeciesNotification(outcome)
                                             finishAutomaticCapture(id, outcome)
                                         }
                                     }
@@ -454,6 +476,8 @@ class ScreenCaptureService : Service() {
             this,
             autoRead = { startAutomaticReading(automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this)) },
             resumeAutoRead = { startAutomaticReading(automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this), resume = true) },
+            boxRead = ::startBoxReverseReading,
+            manageDifficultSpecies = ::showManageDifficultSpeciesDialog,
             setCatchEnabled = ::setCatchTrialEnabled,
             teachCatchSample = ::teachCatchSample,
             liveThrow = {
@@ -860,7 +884,7 @@ class ScreenCaptureService : Service() {
             override fun frame() = automaticFrame
             override fun openAppraisal(result: (Boolean) -> Unit) = control.openAppraisal(result)
             override fun capture(recordId: String, result: (OverlayIvProcessor.Outcome) -> Unit) {
-                requestOverlayCapture(AutoCapture(recordId, result))
+                requestOverlayCapture(AutoCapture(recordId, done = result))
             }
             override fun holdCurrent(expected: ReaderAutoScan.Frame, expectedCp: Int?,
                                      result: (com.example.pokemonivreader.overlayqueue.GoHoldWorkflow.Result) -> Unit) =
@@ -897,6 +921,172 @@ class ScreenCaptureService : Service() {
                 // an end OR ambiguity, never proof that unread individuals were scanned.
                 if(message.startsWith("左スワイプ後の移動なし")&&session.records().isNotEmpty())
                     ReaderWebTransfer.automate(this)
+            }
+        }.also {
+            suggestedSpeciesInSession.clear()
+            it.start()
+        }
+    }
+
+    private fun handleDifficultSpeciesNotification(outcome: OverlayIvProcessor.Outcome) {
+        if (boxReverseScan != null) return
+        val species = outcome.speciesName?.trim()?.takeIf { it.isNotBlank() && it != "要確認" } ?: return
+        val newlyAdded = if (outcome.cpMissing) BoxDifficultSpeciesStore.add(this, species) else false
+        val isDifficult = newlyAdded || BoxDifficultSpeciesStore.contains(this, species)
+        if (!isDifficult) return
+        if (!suggestedSpeciesInSession.add(species.lowercase())) return
+        showBoxReadSuggestionDialog(species, outcome.cpMissing)
+    }
+
+    private fun showBoxReadSuggestionDialog(speciesName: String, cpMissingNow: Boolean) {
+        if (!android.provider.Settings.canDrawOverlays(this)) return
+        boxSuggestionDialog?.dismiss()
+        val message = if (cpMissingNow) {
+            "「$speciesName」は詳細画面でCPが読めませんでした（困難リストへ自動登録）。\nボックス一覧から「ボックスCP読み取り」に切り替えますか？"
+        } else {
+            "「$speciesName」はCP困難リストに登録されています。\nボックス一覧から「ボックスCP読み取り」に切り替えますか？"
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("ボックスCP読み取りの提案")
+            .setMessage(message)
+            .setPositiveButton("読取を止めてボックスへ") { _, _ ->
+                autoScan?.cancel()
+                Toast.makeText(this, "CP順のボックス一覧を開いて「⋯ → ボックスCP読み取り ←」を押してください", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("このまま続行", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
+        boxSuggestionDialog = dialog
+    }
+
+    private fun showManageDifficultSpeciesDialog() {
+        if (!android.provider.Settings.canDrawOverlays(this)) return
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val pad = (16 * resources.displayMetrics.density).roundToInt()
+            setPadding(pad, pad / 2, pad, 0)
+        }
+        val input = android.widget.EditText(this).apply {
+            hint = "ポケモン名を入力（例: プリン）"
+            isSingleLine = true
+        }
+        val listText = TextView(this).apply {
+            textSize = 13f
+            setPadding(0, (8 * resources.displayMetrics.density).roundToInt(), 0, 0)
+        }
+        fun refreshList() {
+            val items = BoxDifficultSpeciesStore.list(this)
+            listText.text = if (items.isEmpty()) "登録済み: なし"
+            else "登録済み (${items.size}件):\n" + items.joinToString("、")
+        }
+        refreshList()
+        container.addView(input)
+        container.addView(listText)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("CP困難ポケモン登録")
+            .setView(container)
+            .setPositiveButton("追加") { _, _ ->
+                val name = input.text?.toString().orEmpty().trim()
+                if (BoxDifficultSpeciesStore.add(this, name)) {
+                    Toast.makeText(this, "「$name」を登録しました", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "登録できませんでした（空欄または登録済み）", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNeutralButton("登録を1件削除") { _, _ ->
+                val items = BoxDifficultSpeciesStore.list(this)
+                if (items.isEmpty()) {
+                    Toast.makeText(this, "削除できる登録がありません", Toast.LENGTH_SHORT).show()
+                    return@setNeutralButton
+                }
+                val delDialog = AlertDialog.Builder(this)
+                    .setTitle("削除するポケモンを選択")
+                    .setItems(items.toTypedArray()) { _, idx ->
+                        val target = items[idx]
+                        if (BoxDifficultSpeciesStore.remove(this, target)) {
+                            Toast.makeText(this, "「$target」を削除しました", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .setNegativeButton("閉じる", null)
+                    .create()
+                delDialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+                delDialog.show()
+            }
+            .setNegativeButton("閉じる", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
+    }
+
+    private fun startBoxReverseReading() {
+        if (GoTextInputAccessibilityService.isCatchTrialRunning()) {
+            Toast.makeText(this, "捕獲をオフにしてから読み取ってください", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (throwRecording != null || autoReading || projection == null || pipeline.size() != 0 || appraisalReview.isShowing) {
+            updateNotification("読取・確認が完了してからボックスCP読み取りを開始してください")
+            return
+        }
+        refreshPanel()
+        if (panelCoordinates == null) {
+            updateNotification("先に評価パネルの範囲を設定してください")
+            return
+        }
+        val boxGrid = com.example.pokemonivreader.overlayqueue.GoButtonTemplateStore(this).loadBoxGrid()
+        if (boxGrid == null) {
+            updateNotification("先に「⋯ → ボタンを学習 → ボックス一覧の範囲を学習」を設定してください")
+            Toast.makeText(this, "先に「ボタンを学習 → ボックス一覧の範囲を学習」を設定してください", Toast.LENGTH_LONG).show()
+            return
+        }
+        val control = GoTextInputAccessibilityService.beginReaderAutomation {
+            boxReverseScan?.cancel()
+        }
+        if (control == null) {
+            updateNotification("GOを開き、ユーザー補助と停止ボタンの表示を確認してください")
+            return
+        }
+        val automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this)
+        val session = ReaderAutomationStore(this)
+        if (automation) session.beginReading()
+        readerControl = control
+        autoReading = true; automaticFrame = null
+        captureGate.clear(); previousScene = null; cpFrames.clear()
+        shadowOverlayRoot?.visibility = android.view.View.INVISIBLE
+        boxReverseScan = BoxReverseAutoScan(main, object : BoxReverseAutoScan.Port {
+            override fun foreground() = projection != null && control.foreground()
+            override fun frame() = automaticFrame
+            override fun readBoxPage(result: (BoxReverseAutoScan.BoxPageResult) -> Unit) {
+                boxPageRequest = boxGrid to result
+            }
+            override fun scrollBoxDown(result: (Boolean) -> Unit) = control.scrollBoxDown(result)
+            override fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit) = control.tapPoint(x, y, result)
+            override fun openAppraisal(result: (Boolean) -> Unit) = control.openAppraisal(result)
+            override fun capture(recordId: String, cpOverride: Int?, result: (OverlayIvProcessor.Outcome) -> Unit) {
+                requestOverlayCapture(AutoCapture(recordId, cpOverride, result))
+            }
+            override fun swipeRight(result: (Boolean) -> Unit) = control.swipeRight(result)
+            override fun saved(recordId: String) {
+                if (automation) {
+                    session.saved(recordId)
+                    session.markHold(recordId, verified = true)
+                }
+            }
+            override fun hint(message: String) { updateNotification(message) }
+        }) { message, completed ->
+            autoReading = false; boxReverseScan = null; automaticFrame = null
+            boxPageRequest = null
+            captureGate.clear(); previousScene = null; cpFrames.clear()
+            automaticCaptures.clear()
+            readerControl?.close(); readerControl = null
+            shadowOverlayRoot?.visibility = android.view.View.VISIBLE
+            showScanResult(message, false)
+            if (automation) {
+                session.pauseReading()
+                if (completed && session.records().isNotEmpty()) {
+                    ReaderWebTransfer.automate(this)
+                }
             }
         }.also { it.start() }
     }
@@ -1202,6 +1392,11 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onDestroy() {
+        autoScan?.cancel()
+        boxReverseScan?.cancel()
+        boxSuggestionDialog?.dismiss()
+        boxSuggestionDialog = null
+        boxPageRequest = null
         com.example.pokemonivreader.overlayqueue.SearchOverlayVisibility.remove(searchVisibilityListener)
         readerOverlayRequested = false
         closeProjection(stopProjection = true)

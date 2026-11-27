@@ -20,6 +20,7 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
     DETAIL_MENU("詳細画面の右下にあるメニュー（≡）を囲みます"),
     APPRAISAL("個体メニュー右下の評価（リボン）アイコンを囲みます"),
     APPRAISAL_PANEL("個体値評価パネルの左上から右下まで全体を囲みます"),
+    BOX_GRID("ボックス一覧の3列カード領域（検索欄や下部の×・ソートボタンを除く）を囲みます"),
     TAG_MENU("個体メニューの TAG／タグ の文字を囲みます", setOf("tag", "タグ")),
     BULK_TAG("複数選択画面の TAG の文字を囲みます。件数や周りの余白を含められます", setOf("tag", "タグ")),
     PREV("タグ選択画面で prev の文字を囲みます", setOf("prev")),
@@ -41,6 +42,7 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
         DETAIL_MENU -> "詳細画面のメニュー"
         APPRAISAL -> "評価ボタン（リボン）"
         APPRAISAL_PANEL -> "評価パネル"
+        BOX_GRID -> "ボックス一覧の範囲"
         TAG_MENU -> "個体メニューの TAG"
         BULK_TAG -> "複数選択の TAG"
         PREV -> "タグ一覧の prev"
@@ -82,24 +84,48 @@ internal class GoButtonTemplateStore(
     fun custom(label: String, screen: String): Role =
         Role("custom_${java.util.UUID.randomUUID()}", label.trim(), screen.trim())
 
-    fun count(role: Role): Int =
-        if (role.target == GoLearningTarget.APPRAISAL_PANEL) (if (hasAppraisalPanel()) 1 else 0)
-        else decode(prefs.getString(role.id, null)).size
+    fun count(role: Role): Int = when (role.target) {
+        GoLearningTarget.APPRAISAL_PANEL -> if (hasAppraisalPanel()) 1 else 0
+        GoLearningTarget.BOX_GRID -> if (hasBoxGrid()) 1 else 0
+        else -> decode(prefs.getString(role.id, null)).size
+    }
 
-    fun hasAppraisalPanel(): Boolean {
+    fun hasAppraisalPanel(): Boolean = loadNormalizedRect("crop_template_v1") != null
+
+    fun saveAppraisalPanel(bounds: Rect, imageWidth: Int, imageHeight: Int): Boolean =
+        saveNormalizedRect("crop_template_v1", bounds, imageWidth, imageHeight)
+
+    fun clearAppraisalPanel(): Boolean =
+        context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+            .edit().remove("crop_template_v1").commit()
+
+    fun hasBoxGrid(): Boolean = loadBoxGrid() != null
+
+    fun loadBoxGrid(): DoubleArray? = loadNormalizedRect("box_grid_template_v1")
+
+    fun saveBoxGrid(bounds: Rect, imageWidth: Int, imageHeight: Int): Boolean =
+        saveNormalizedRect("box_grid_template_v1", bounds, imageWidth, imageHeight)
+
+    fun clearBoxGrid(): Boolean =
+        context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+            .edit().remove("box_grid_template_v1").commit()
+
+    private fun loadNormalizedRect(key: String): DoubleArray? {
         val raw = context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
-            .getString("crop_template_v1", null) ?: return false
+            .getString(key, null) ?: return null
         return try {
             val cfg = JSONObject(raw)
             val coords = listOf("x1", "y1", "x2", "y2").map { cfg.optDouble(it, Double.NaN) }
             val aspect = cfg.optDouble("aspect", Double.NaN)
-            coords.all { it.isFinite() && it in 0.0..1.0 } && aspect.isFinite() && aspect > 0.0
+            if (coords.all { it.isFinite() && it in 0.0..1.0 } && aspect.isFinite() && aspect > 0.0) {
+                doubleArrayOf(coords[0], coords[1], coords[2], coords[3], aspect)
+            } else null
         } catch (_: Exception) {
-            false
+            null
         }
     }
 
-    fun saveAppraisalPanel(bounds: Rect, imageWidth: Int, imageHeight: Int): Boolean {
+    private fun saveNormalizedRect(key: String, bounds: Rect, imageWidth: Int, imageHeight: Int): Boolean {
         if (imageWidth <= 0 || imageHeight <= 0) return false
         if (bounds.left < 0 || bounds.top < 0 || bounds.right > imageWidth || bounds.bottom > imageHeight) return false
         if (bounds.width() < 100 || bounds.height() < 100) return false
@@ -111,12 +137,8 @@ internal class GoButtonTemplateStore(
             put("aspect", imageWidth.toDouble() / imageHeight)
         }
         return context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
-            .edit().putString("crop_template_v1", json.toString()).commit()
+            .edit().putString(key, json.toString()).commit()
     }
-
-    fun clearAppraisalPanel(): Boolean =
-        context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
-            .edit().remove("crop_template_v1").commit()
 
     fun rename(role: Role, label: String): Boolean =
         validLabel(label) && prefs.edit().putString("label:${role.id}", label.trim()).commit()
