@@ -37,6 +37,15 @@ internal object GoButtonLearningMenu {
         if (!anchor.isAttachedToWindow || isLocked()) return
         val store = GoButtonTemplateStore(context)
         val popup = PopupMenu(context, anchor).apply {
+            val missingCount = com.example.pokemonivreader.ReaderSetupChecklist.evaluate(context)
+                .missingLearningSteps.size
+            val stepUpLabel = if (missingCount > 0) "ステップアップ学習（残り${missingCount}件）"
+                else "ステップアップ学習（完了済み）"
+            menu.action(stepUpLabel, !isLocked()) {
+                if (!GoStepUpLearningGuide.start(context, launchGo = false)) {
+                    onStatus("ステップアップ学習を開けませんでした。オーバーレイ権限を確認してください")
+                }
+            }
             menu.action("画面を囲んで登録（ボタン・範囲・キーボード）", !isLocked()) { requestLearning(null, null, false) }
             menu.action("登録済みボタン・範囲", !isLocked()) {
                 anchor.post {

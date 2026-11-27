@@ -856,8 +856,8 @@ class ScreenCaptureService : Service() {
                         if (boxGrid != null) {
                             startBoxReverseReading(null)
                         } else {
-                            updateNotification("ボックス一覧の範囲が未学習です。⋯ → ボタンを学習 → 画面を囲んで登録 から設定してください")
-                            Toast.makeText(this, "ボックス一覧の範囲を先に学習してください", Toast.LENGTH_LONG).show()
+                            com.example.pokemonivreader.overlayqueue.GoStepUpLearningGuide.start(this, launchGo = false)
+                            updateNotification("ボックス一覧の範囲が未学習です。表示されたステップアップ学習で囲んで保存してください")
                         }
                     }
                     GoTextInputAccessibilityService.CurrentGoScreen.DETAIL_OR_APPRAISAL -> {
