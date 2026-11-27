@@ -214,17 +214,26 @@ internal class ReaderQuickMenuPopup(
             dismiss(); autoRead.invoke()
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
 
-        if (resumeAutoRead != null) root.addView(textButton("自動読み取りを再開 ←") {
-            dismiss()
-            if (isAutoSelectionEnabled(context)) {
-                val state = com.example.pokemonivreader.ReaderAutomationStore(context)
-                if (state.state == "ready") OverlayCopyQueueController.get(context).startAutomationBatch()
-                else if (state.pending() != null) com.example.pokemonivreader.ReaderWebTransfer.automate(context, true)
-                else resumeAutoRead.invoke()
+        if (resumeAutoRead != null) {
+            val boxState = com.example.pokemonivreader.BoxReverseCheckpoint(context).load()
+            val resumeLabel = if (boxState != null) {
+                val cpLabel = boxState.nextCp?.let { "CP$it" } ?: "CP不明"
+                "ボックス読取を再開 (残${boxState.remaining}・$cpLabel) ←"
             } else {
-                resumeAutoRead.invoke()
+                "自動読み取りを再開 ←"
             }
-        }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
+            root.addView(textButton(resumeLabel) {
+                dismiss()
+                if (isAutoSelectionEnabled(context)) {
+                    val state = com.example.pokemonivreader.ReaderAutomationStore(context)
+                    if (state.state == "ready") OverlayCopyQueueController.get(context).startAutomationBatch()
+                    else if (state.pending() != null) com.example.pokemonivreader.ReaderWebTransfer.automate(context, true)
+                    else resumeAutoRead.invoke()
+                } else {
+                    resumeAutoRead.invoke()
+                }
+            }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
+        }
 
         if (boxRead != null) root.addView(textButton("ボックスCP読み取り ←") {
             dismiss(); boxRead.invoke()

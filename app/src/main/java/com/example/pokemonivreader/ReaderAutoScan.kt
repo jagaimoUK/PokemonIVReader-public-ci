@@ -181,8 +181,23 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
         }
         if (frame?.appraisal != true) {
             if (restored != null) {
-                if (now() >= validationDeadline) stop("前回の個体の評価画面を開いてから再開してください", StopReason.CHECKPOINT_MISMATCH)
-                else schedule()
+                if (now() >= validationDeadline) {
+                    stop("前回の個体の評価画面を開いてから再開してください", StopReason.CHECKPOINT_MISMATCH)
+                    return
+                }
+                if (frame == null || appraisalOpens >= MAX_APPRAISAL_OPENS) {
+                    schedule()
+                    return
+                }
+                appraisalOpens++
+                busy = true
+                port.openAppraisal { ok ->
+                    if (stage == Stage.STOPPED) return@openAppraisal
+                    busy = false
+                    port.hint(if (ok) "前回の評価画面を確認中" else "前回の個体メニューを確認中")
+                    schedule(if (ok) 900L else 700L)
+                }
+                if (busy) schedule()
                 return
             }
             if (appraisalWaitSince < 0L) appraisalWaitSince = now()
@@ -359,8 +374,8 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
     companion object {
         const val MAX_ATTEMPTS = 3
         const val CP_WAIT_TIMEOUT_MS = 30_000L
-        private const val MAX_APPRAISAL_OPENS = 3
-        private const val APPRAISAL_WAIT_TIMEOUT_MS = 10_000L
+        private const val MAX_APPRAISAL_OPENS = 6
+        private const val APPRAISAL_WAIT_TIMEOUT_MS = 15_000L
         private const val MOVE_FRAME_TIMEOUT_MS = 12_000L
     }
     private fun advance(current:Frame) {

@@ -17,6 +17,12 @@ internal class BoxReverseAutoScan(
     private val done: (String, Boolean) -> Unit,
 ) {
     data class BoxPageResult(val rows: List<BoxGridCpReader.BoxRow>, val lastTapPoint: Pair<Float, Float>?)
+    data class ResumeState(
+        val collectedCps: List<Int?>,
+        val cpIndex: Int,
+        val saved: Int,
+        val lastTapPoint: Pair<Float, Float>? = null,
+    )
 
     enum class StopReason {
         COMPLETED, USER_STOP, FOREGROUND_LOST, BOX_EMPTY, SCROLL_FAILED,
@@ -38,6 +44,8 @@ internal class BoxReverseAutoScan(
         fun capture(recordId: String, cpOverride: Int?, result: (OverlayIvProcessor.Outcome) -> Unit)
         fun swipeRight(result: (Boolean) -> Unit)
         fun saved(recordId: String) {}
+        fun saveCheckpoint(state: ResumeState) {}
+        fun clearCheckpoint() {}
         fun hint(message: String)
         fun stopped(stage: Stage, reason: StopReason, saved: Int, collectedCps: Int) {}
     }
@@ -69,7 +77,25 @@ internal class BoxReverseAutoScan(
 
     private fun now() = SystemClock.elapsedRealtime()
 
-    fun start() {
+    fun start(resumeState: ResumeState? = null) {
+        if (resumeState != null && resumeState.collectedCps.isNotEmpty() &&
+            resumeState.cpIndex in resumeState.collectedCps.indices) {
+            collectedCps = resumeState.collectedCps
+            cpIndex = resumeState.cpIndex
+            saved = resumeState.saved
+            lastTapPoint = resumeState.lastTapPoint
+            detailWaitSince = now()
+            appraisalOpens = 0
+            detailRetries = 0
+            candidate = null
+            stage = Stage.WAIT_DETAIL
+            val ordinal = collectedCps.size - cpIndex
+            val expectedCp = collectedCps.getOrNull(cpIndex)
+            port.hint("ボックス読取を再開（$ordinal/${collectedCps.size}体目" +
+                (expectedCp?.let { "・CP$it" } ?: "") + "）")
+            schedule(0)
+            return
+        }
         port.hint("ボックスCPを読み取り中…")
         schedule(0)
     }
@@ -85,11 +111,21 @@ internal class BoxReverseAutoScan(
 
     private fun stop(message: String, reason: StopReason) {
         if (stage == Stage.STOPPED) return
+        if (reason == StopReason.COMPLETED) {
+            runCatching { port.clearCheckpoint() }
+        } else if (collectedCps.isNotEmpty() && cpIndex in collectedCps.indices) {
+            runCatching { port.saveCheckpoint(ResumeState(collectedCps, cpIndex, saved, lastTapPoint)) }
+        }
         runCatching { port.stopped(stage, reason, saved, collectedCps.size) }
         stage = Stage.STOPPED
         handler.removeCallbacks(tick)
         handler.removeCallbacks(captureTimeout)
-        done("$message（保存 $saved 体）", reason == StopReason.COMPLETED)
+        val resumeHint = if (reason != StopReason.COMPLETED && collectedCps.isNotEmpty() && cpIndex in collectedCps.indices) {
+            val ordinal = collectedCps.size - cpIndex
+            val nextCp = collectedCps.getOrNull(cpIndex)?.let { "CP$it" } ?: "CP不明"
+            "・次:${ordinal}/${collectedCps.size}($nextCp)"
+        } else ""
+        done("$message（保存 $saved 体$resumeHint）", reason == StopReason.COMPLETED)
     }
 
     private fun poll() {
@@ -224,10 +260,10 @@ internal class BoxReverseAutoScan(
                 }
                 appraisalOpens++
                 busy = true
-                port.openAppraisal { _ ->
+                port.openAppraisal { ok ->
                     if (stage == Stage.STOPPED) return@openAppraisal
                     busy = false
-                    if (stage == Stage.WAIT_DETAIL) schedule(800L)
+                    if (stage == Stage.WAIT_DETAIL) schedule(if (ok) 900L else 700L)
                 }
                 if (busy) schedule()
             }
@@ -287,6 +323,7 @@ internal class BoxReverseAutoScan(
             return
         }
         cpIndex = collectedCps.lastIndex
+        runCatching { port.saveCheckpoint(ResumeState(collectedCps, cpIndex, saved, lastTapPoint)) }
         stage = Stage.TAP_LAST
         port.hint("最下部到達（計${collectedCps.size}体）・最後の個体を開きます")
         busy = true
@@ -301,7 +338,7 @@ internal class BoxReverseAutoScan(
             appraisalOpens = 0
             candidate = null
             stage = Stage.WAIT_DETAIL
-            schedule(700L)
+            schedule(1000L)
         }
         if (busy) schedule()
     }
@@ -341,6 +378,7 @@ internal class BoxReverseAutoScan(
                 stop("ボックスCP逆順読み取りを完了しました", StopReason.COMPLETED)
                 return@capture
             }
+            runCatching { port.saveCheckpoint(ResumeState(collectedCps, cpIndex, saved, lastTapPoint)) }
             detailBaseline = current
             stage = Stage.SWIPE_PREV
             busy = true
@@ -364,8 +402,8 @@ internal class BoxReverseAutoScan(
 
     companion object {
         private const val MAX_RETRIES = 3
-        private const val MAX_APPRAISAL_OPENS = 3
+        private const val MAX_APPRAISAL_OPENS = 7
         private const val SCROLL_TIMEOUT_MS = 10_000L
-        private const val DETAIL_TIMEOUT_MS = 10_000L
+        private const val DETAIL_TIMEOUT_MS = 15_000L
     }
 }
