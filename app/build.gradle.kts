@@ -25,9 +25,9 @@ android {
         applicationId = "com.example.pokemonivreader"
         minSdk = 28
         targetSdk = 37
-        // Test build updated in place from signed 1.5.72 / 97; keep the existing app ID and signer.
-        versionCode = 101
-        versionName = "1.5.76"
+        // Test build updated in place from signed 1.5.76 / 101; keep the existing app ID and signer.
+        versionCode = 102
+        versionName = "1.5.77"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
