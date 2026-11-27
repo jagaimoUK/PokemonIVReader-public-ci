@@ -56,7 +56,7 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
         restored?.let {
             recordId = it.recordId
             saved = it.count
-            validationDeadline = now() + 7_000L
+            validationDeadline = now() + 15_000L
         }
         schedule(0)
     }
@@ -225,28 +225,29 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
         restored?.let { old ->
             val same = if (old.holdState in setOf(HoldState.TAGGING, HoldState.TAGGED, HoldState.TAG_FAILED))
                 ReaderSceneFingerprint.sameAfterHold(old.signature, frame.signature) else old.signature.same(frame.signature)
-            if (!same) {
-                stop("再開位置を確認できません。前回止まった個体を開いて再開してください",StopReason.CHECKPOINT_MISMATCH);return
-            }
-            if (old.holdState != HoldState.NONE) {
-                val first = candidate
-                if (first == null || !first.signature.same(frame.signature)) {
-                    candidate = frame
-                    schedule()
-                    return
-                }
-                if (frame.at - first.at < 250L) { schedule(); return }
-                candidate = null
-                baseline = frame
-            }
             restored = null
-            if (old.saved || old.held) {
+            if (same && (old.saved || old.held)) {
+                if (old.holdState != HoldState.NONE) {
+                    val first = candidate
+                    if (first == null || !first.signature.same(frame.signature)) {
+                        restored = old
+                        candidate = frame
+                        schedule()
+                        return
+                    }
+                    if (frame.at - first.at < 250L) { restored = old; schedule(); return }
+                    candidate = null
+                }
                 baseline = frame
                 holdState = old.holdState
                 advance(frame)
                 return
             }
-            holdState = old.holdState
+            // If signature differs (e.g. background animation, overlay shift, or user manually advanced),
+            // continue reading from the currently displayed individual with preserved saved count.
+            candidate = null
+            baseline = frame
+            holdState = if (same) old.holdState else HoldState.NONE
         }
         if (retrying && baseline?.signature?.same(frame.signature) != true) {
             if(confirmedChange(frame)) stop("再試行の途中で個体が変わったため停止しました",StopReason.INDIVIDUAL_CHANGED)

@@ -342,11 +342,26 @@ class ReaderAutoScanTest {
         val scan=start(fake)
         assertEquals(1,fake.swipes);assertTrue(fake.ids.isEmpty());scan.cancel()
     }
-    @Test fun resumeDifferentIndividualNeverOverwritesCheckpointOrSwipes() {
+    @Test fun resumeDifferentIndividualReadsCurrentWithoutSwipingPrematurely() {
         val fake=Fake();fake.checkpoint=ReaderAutoScan.Checkpoint("old-id",signature(0xffffffff.toInt()),false,7)
-        var stopped="";start(fake){stopped=it}
-        assertTrue(stopped.contains("再開位置"));assertEquals(0,fake.swipes);assertTrue(fake.ids.isEmpty())
-        assertEquals(ReaderAutoScan.Stage.READING to ReaderAutoScan.StopReason.CHECKPOINT_MISMATCH, fake.stopEvents.single())
+        val scan=start(fake)
+        assertEquals(1,fake.ids.size);assertEquals(0,fake.swipes)
+        assertTrue(fake.stopEvents.isEmpty())
+        scan.cancel()
+    }
+    @Test fun resumeOpensAppraisalWhenStartingOnDetailScreen() {
+        val fake=Fake().apply {
+            appraisal = false
+            checkpoint = ReaderAutoScan.Checkpoint("old-id", signature, false, 3)
+        }
+        val scan = start(fake)
+        advance(2_000)
+        assertTrue("Expected openAppraisal calls on resume, got ${fake.opens}", fake.opens >= 1)
+        fake.appraisal = true
+        advance(1_500)
+        assertEquals(1, fake.ids.size)
+        assertTrue(fake.stopEvents.isEmpty())
+        scan.cancel()
     }
 
 }

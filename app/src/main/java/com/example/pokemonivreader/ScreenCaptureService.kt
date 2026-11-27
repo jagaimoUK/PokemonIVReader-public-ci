@@ -846,6 +846,32 @@ class ScreenCaptureService : Service() {
             updateNotification("読取・確認が完了してから自動読み取りを開始してください")
             return
         }
+        val boxSaved = BoxReverseCheckpoint(this).load()
+        if (boxSaved != null && android.provider.Settings.canDrawOverlays(this)) {
+            val dialog = AlertDialog.Builder(this)
+                .setTitle("ボックスCPの結果が保持されています")
+                .setMessage(
+                    "${boxSaved.progressSummary()}\n" +
+                        "次: ${boxSaved.nextTargetLabel()}\n\n" +
+                        "このまま続きから再開しますか？"
+                )
+                .setPositiveButton("続きから再開") { _, _ ->
+                    startBoxReverseReading(boxSaved.toResumeState())
+                }
+                .setNeutralButton("破棄して最初から") { _, _ ->
+                    BoxReverseCheckpoint(this).clear()
+                    launchUnifiedScreenDetection(automation)
+                }
+                .setNegativeButton("キャンセル", null)
+                .create()
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+            dialog.show()
+            return
+        }
+        launchUnifiedScreenDetection(automation)
+    }
+
+    private fun launchUnifiedScreenDetection(automation: Boolean) {
         updateNotification("GOの画面を確認中…")
         GoTextInputAccessibilityService.detectCurrentScreen { screen ->
             main.post {
