@@ -51,6 +51,12 @@ internal object ReaderSetupChecklist {
                 howTo = "GOのポケモン一覧を表示し、役割「ボックス一覧の範囲」で3列カード領域を囲んで保存",
             ),
             Item(
+                id = "first_card",
+                title = GoLearningTarget.FIRST_CARD.title,
+                ready = store.hasFirstCard(),
+                howTo = "GOのポケモン一覧で左上の1匹目を囲み、役割「一覧の左上の1匹目」で保存",
+            ),
+            Item(
                 id = "search_icon",
                 title = GoLearningTarget.SEARCH.title,
                 ready = store.count(store.role(GoLearningTarget.SEARCH)) > 0,

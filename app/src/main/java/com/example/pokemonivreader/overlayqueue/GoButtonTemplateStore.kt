@@ -21,6 +21,7 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
     APPRAISAL("個体メニュー右下の評価（リボン）アイコンを囲みます"),
     APPRAISAL_PANEL("個体値評価パネルの左上から右下まで全体を囲みます"),
     BOX_GRID("ボックス一覧の3列カード領域（検索欄や下部の×・ソートボタンを除く）を囲みます"),
+    FIRST_CARD("ボックス一覧で左上の1匹目のカードを囲みます（Prev解除・一括整理で使用）"),
     TAG_MENU("個体メニューの TAG／タグ の文字を囲みます", setOf("tag", "タグ")),
     BULK_TAG("複数選択画面の TAG の文字を囲みます。件数や周りの余白を含められます", setOf("tag", "タグ")),
     PREV("タグ選択画面で prev の文字を囲みます", setOf("prev")),
@@ -43,6 +44,7 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
         APPRAISAL -> "評価ボタン（リボン）"
         APPRAISAL_PANEL -> "評価パネル"
         BOX_GRID -> "ボックス一覧の範囲"
+        FIRST_CARD -> "一覧の左上の1匹目"
         TAG_MENU -> "個体メニューの TAG"
         BULK_TAG -> "複数選択の TAG"
         PREV -> "タグ一覧の prev"
@@ -53,6 +55,7 @@ internal enum class GoLearningTarget(val instruction: String, val labels: Set<St
     }
 
     val keyboardControl get() = this == IME_SEARCH || this == IME_DISMISS
+    val isRegionTarget get() = this == APPRAISAL_PANEL || this == BOX_GRID || this == FIRST_CARD
 
     fun accepts(text: String): Boolean = GoWorkflowPolicy.normalized(text) in labels
 }
@@ -87,6 +90,7 @@ internal class GoButtonTemplateStore(
     fun count(role: Role): Int = when (role.target) {
         GoLearningTarget.APPRAISAL_PANEL -> if (hasAppraisalPanel()) 1 else 0
         GoLearningTarget.BOX_GRID -> if (hasBoxGrid()) 1 else 0
+        GoLearningTarget.FIRST_CARD -> if (hasFirstCard()) 1 else 0
         else -> decode(prefs.getString(role.id, null)).size
     }
 
@@ -110,6 +114,17 @@ internal class GoButtonTemplateStore(
         context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
             .edit().remove("box_grid_template_v1").commit()
 
+    fun hasFirstCard(): Boolean = loadFirstCard() != null
+
+    fun loadFirstCard(): DoubleArray? = loadNormalizedRect("first_card_template_v1")
+
+    fun saveFirstCard(bounds: Rect, imageWidth: Int, imageHeight: Int): Boolean =
+        saveNormalizedRect("first_card_template_v1", bounds, imageWidth, imageHeight, minSize = 40)
+
+    fun clearFirstCard(): Boolean =
+        context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+            .edit().remove("first_card_template_v1").commit()
+
     private fun loadNormalizedRect(key: String): DoubleArray? {
         val raw = context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
             .getString(key, null) ?: return null
@@ -125,10 +140,16 @@ internal class GoButtonTemplateStore(
         }
     }
 
-    private fun saveNormalizedRect(key: String, bounds: Rect, imageWidth: Int, imageHeight: Int): Boolean {
+    private fun saveNormalizedRect(
+        key: String,
+        bounds: Rect,
+        imageWidth: Int,
+        imageHeight: Int,
+        minSize: Int = 100
+    ): Boolean {
         if (imageWidth <= 0 || imageHeight <= 0) return false
         if (bounds.left < 0 || bounds.top < 0 || bounds.right > imageWidth || bounds.bottom > imageHeight) return false
-        if (bounds.width() < 100 || bounds.height() < 100) return false
+        if (bounds.width() < minSize || bounds.height() < minSize) return false
         val json = JSONObject().apply {
             put("x1", bounds.left.toDouble() / imageWidth)
             put("y1", bounds.top.toDouble() / imageHeight)

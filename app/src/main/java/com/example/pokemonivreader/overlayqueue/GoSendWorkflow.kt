@@ -32,6 +32,7 @@ internal class GoSendWorkflow(
         fun observe(result: (Observation?) -> Unit)
         fun tap(box: GoWorkflowPolicy.Box): Boolean
         fun hold(box: GoWorkflowPolicy.Box): Boolean
+        fun fallbackFirstCard(scene: GoWorkflowPolicy.Scene): GoWorkflowPolicy.Box? = null
         fun selectAll(box: GoWorkflowPolicy.Box, completed: (Boolean) -> Unit): Boolean = false
         fun submitSearch() {}
         fun resolveCleanupKeyboard(query: String): CleanupKeyboardStatus = CleanupKeyboardStatus.Ready
@@ -431,9 +432,9 @@ internal class GoSendWorkflow(
             }
             Stage.RESULTS -> if (stable(s)) {
                 if (s.count == 0) { enter(checkNotNull(query) + "&#send", Stage.VERIFY_TAG); return }
-                val card = s.cards.firstOrNull() ?: return
+                val cardBox = s.cards.firstOrNull()?.box ?: port.fallbackFirstCard(s) ?: return
                 tagCount = s.count
-                if (valid() && port.hold(card.box)) advance(Stage.SELECT_ALL)
+                if (valid() && port.hold(cardBox)) advance(Stage.SELECT_ALL)
             }
             Stage.SELECT_ALL -> {
                 if (s.selectedCount == tagCount && s.bulkTag != null) advance(Stage.OPEN_TAGS)

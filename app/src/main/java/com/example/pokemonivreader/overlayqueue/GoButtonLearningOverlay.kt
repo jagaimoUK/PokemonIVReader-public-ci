@@ -231,17 +231,21 @@ internal class GoButtonLearningOverlay(
     private fun save(role: GoButtonTemplateStore.Role, bounds: Rect) {
         if (closed || checkingLabel) return
         val target = role.target
-        if (target == GoLearningTarget.APPRAISAL_PANEL || target == GoLearningTarget.BOX_GRID) {
+        if (target?.isRegionTarget == true) {
             if (excluded.any { Rect.intersects(it, bounds) }) {
                 showStatus("キーボードを避けて枠を指定してください")
                 return
             }
-            if (bounds.width() < 100 || bounds.height() < 100) {
+            val minSize = if (target == GoLearningTarget.FIRST_CARD) 40 else 100
+            if (bounds.width() < minSize || bounds.height() < minSize) {
                 showStatus("範囲を広めに指定してください（全体を囲んでください）")
                 return
             }
-            val saved = if (target == GoLearningTarget.BOX_GRID) store.saveBoxGrid(bounds, bitmap.width, bitmap.height)
-                else store.saveAppraisalPanel(bounds, bitmap.width, bitmap.height)
+            val saved = when (target) {
+                GoLearningTarget.BOX_GRID -> store.saveBoxGrid(bounds, bitmap.width, bitmap.height)
+                GoLearningTarget.FIRST_CARD -> store.saveFirstCard(bounds, bitmap.width, bitmap.height)
+                else -> store.saveAppraisalPanel(bounds, bitmap.width, bitmap.height)
+            }
             if (saved) {
                 close("保存しました。 ${role.title}")
             } else {

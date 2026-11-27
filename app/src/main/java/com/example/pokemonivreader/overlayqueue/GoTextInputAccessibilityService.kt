@@ -252,6 +252,15 @@ class GoTextInputAccessibilityService : AccessibilityService() {
     private var replacement: GoTextReplacement? = null
     private var resultSelection: GoResultSelectionOverlay? = null
     private val buttonTemplates by lazy { GoButtonTemplateStore(this) }
+    private fun learnedFirstCardBox(scene: GoWorkflowPolicy.Scene): GoWorkflowPolicy.Box? {
+        if (scene.width <= 0 || scene.height <= 0) return null
+        val coords = buttonTemplates.loadFirstCard() ?: return null
+        val l = (minOf(coords[0], coords[2]) * scene.width).roundToInt().coerceIn(0, scene.width - 1)
+        val r = (maxOf(coords[0], coords[2]) * scene.width).roundToInt().coerceIn(l + 1, scene.width)
+        val t = (minOf(coords[1], coords[3]) * scene.height).roundToInt().coerceIn(0, scene.height - 1)
+        val b = (maxOf(coords[1], coords[3]) * scene.height).roundToInt().coerceIn(t + 1, scene.height)
+        return GoWorkflowPolicy.Box(l, t, r, b)
+    }
     private val recognizer by lazy {
         TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     }
@@ -903,6 +912,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
         run = GoSendWorkflow(main, exactBatch, object : GoSendWorkflow.Port {
             override fun foreground() = gameInForeground()
             override fun batchCurrent(id: String) = current(id)
+            override fun fallbackFirstCard(scene: GoWorkflowPolicy.Scene) = learnedFirstCardBox(scene)
             override fun enter(query: String, result: (Boolean, String) -> Unit) {
                 readback = null
                 searchWindowId = null
@@ -1546,6 +1556,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             override fun exitSelection(scene: GoWorkflowPolicy.Scene): Boolean =
                 gameInForeground() && !keyboardVisible() && !scene.tagList && !scene.detail &&
                     (scene.selectAll != null || scene.bulkTag != null) && performGlobalAction(GLOBAL_ACTION_BACK)
+            override fun fallbackFirstCard(scene: GoWorkflowPolicy.Scene) = learnedFirstCardBox(scene)
             override fun hint(message: String) = OverlayCopyQueueController.showWorkflowHint(message, null)
             override fun stopped(stage: String, reason: String, learningTarget: GoLearningTarget?) {
                 stopStage = stage
