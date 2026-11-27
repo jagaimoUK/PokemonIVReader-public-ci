@@ -139,6 +139,12 @@ internal class ReaderIndividualSyncStore(context: Context) {
             val ivs = individual.getJSONObject("ivs")
             require(listOf("attack", "defense", "hp").all { ivs.getInt(it) in 0..15 })
             require(individual.getString("species_id").isNotBlank())
+            if (!individual.isNull("mega_level")) {
+                require(individual.getInt("mega_level") in 1..4) { "メガレベルは1〜4です" }
+            }
+            if (!individual.isNull("charged3")) {
+                require(individual.getString("charged3").isNotBlank()) { "特別技が不正です" }
+            }
             val fields = response.getJSONObject("fields")
             for (field in LIMITS.keys) {
                 val entry = fields.getJSONObject(field)
