@@ -38,6 +38,9 @@ internal object GoButtonLearningMenu {
         val store = GoButtonTemplateStore(context)
         val popup = PopupMenu(context, anchor).apply {
             menu.action("ボタンを囲んで登録", !isLocked()) { requestLearning(null, null, false) }
+            menu.action("評価パネルの範囲を学習", !isLocked()) {
+                requestLearning(store.role(GoLearningTarget.APPRAISAL_PANEL), null, false)
+            }
             menu.addSubMenu("キーボード操作を学習").apply {
                 GoCleanupKeyboard.Control.entries.forEach { control ->
                     val role = store.role(control.target)
@@ -94,23 +97,35 @@ internal object GoButtonLearningMenu {
                     anchor.post {
                         if (!anchor.isAttachedToWindow || isLocked()) return@post
                         val detail = PopupMenu(context, anchor).apply {
-                            menu.action("見本を追加", count < GoButtonTemplateStore.MAX_SAMPLES) {
-                                learn(role, null, false)
-                            }
-                            menu.action("現在の画面で照合", store.load(role).isNotEmpty()) {
-                                learn(role, null, true)
-                            }
-                            menu.action("役割名を変更", true) { onRename(role) }
-                            repeat(count) { index ->
-                                menu.action("見本 ${index + 1} を再学習", true) {
-                                    learn(role, index, false)
+                            if (role.target == GoLearningTarget.APPRAISAL_PANEL) {
+                                menu.action("範囲を設定", true) { learn(role, null, false) }
+                                if (count > 0) {
+                                    menu.action("範囲を削除", true) {
+                                        onStatus(
+                                            if (store.clearAppraisalPanel()) "評価パネルの範囲を削除しました"
+                                            else "評価パネルの範囲を削除できませんでした"
+                                        )
+                                    }
                                 }
-                                menu.action("見本 ${index + 1} を削除", true) {
-                                    onStatus(if (store.delete(role, index)) "見本を削除しました" else "見本を削除できませんでした")
+                            } else {
+                                menu.action("見本を追加", count < GoButtonTemplateStore.MAX_SAMPLES) {
+                                    learn(role, null, false)
                                 }
-                            }
-                            if (role.target == null) menu.action("役割を削除", true) {
-                                onStatus(if (store.delete(role)) "役割を削除しました" else "役割を削除できませんでした")
+                                menu.action("現在の画面で照合", store.load(role).isNotEmpty()) {
+                                    learn(role, null, true)
+                                }
+                                menu.action("役割名を変更", true) { onRename(role) }
+                                repeat(count) { index ->
+                                    menu.action("見本 ${index + 1} を再学習", true) {
+                                        learn(role, index, false)
+                                    }
+                                    menu.action("見本 ${index + 1} を削除", true) {
+                                        onStatus(if (store.delete(role, index)) "見本を削除しました" else "見本を削除できませんでした")
+                                    }
+                                }
+                                if (role.target == null) menu.action("役割を削除", true) {
+                                    onStatus(if (store.delete(role)) "役割を削除しました" else "役割を削除できませんでした")
+                                }
                             }
                         }
                         showPopup(detail, onMenuOpened)

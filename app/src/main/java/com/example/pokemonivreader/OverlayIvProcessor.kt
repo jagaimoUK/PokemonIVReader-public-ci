@@ -323,7 +323,8 @@ internal object OverlayIvProcessor {
                 .getString("bar_color_sensitivity_v1", null)
             val sensitivity = IvBarRecognizer.Sensitivity.entries.firstOrNull { it.name == stored }
                 ?: IvBarRecognizer.Sensitivity.NORMAL
-            IvBarRecognizer.read(pixels, crop.width, crop.height, sensitivity) != null
+            // A partial/ambiguous panel must not authorize automatic swipe or tagging.
+            IvBarRecognizer.read(pixels, crop.width, crop.height, sensitivity)?.reliable == true
         } finally { crop.recycle() }
     }
 

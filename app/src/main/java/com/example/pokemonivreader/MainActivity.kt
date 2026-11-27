@@ -495,11 +495,10 @@ internal fun IvReaderScreen(ivRevision: Int, refreshOnOpen: Boolean = true) {
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { calibrationPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("読み取り範囲") }
                 TextButton(onClick = { showReferences = true }) { Text("見本・バックアップ") }
             }
         }
-        item { Text("読み取り範囲：評価パネルの位置を調整。見本・バックアップ：姿の見本と保存データを管理。", style = MaterialTheme.typography.bodySmall) }
+        item { Text("見本・バックアップ：姿の見本と保存データを管理。評価パネルの範囲は読み取りオーバーレイの「ボタンを学習」から設定できます。", style = MaterialTheme.typography.bodySmall) }
         item {
             Button(onClick = {
                 context.startActivity(Intent(context, ReaderBackupActivity::class.java))

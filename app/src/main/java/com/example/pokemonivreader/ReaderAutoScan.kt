@@ -43,6 +43,9 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
     private var holdFinishedAt = 0L
     private var moveAt = 0L
     private var unchangedAt = 0L
+    // Bound attempts on an unrecognized screen; never keep tapping GO indefinitely.
+    private var appraisalWaitSince = -1L
+    private var appraisalOpens = 0
     private val tick = Runnable { poll() }
     private val captureTimeout = Runnable { stop("解析の応答待ちで停止。保存履歴を確認して再開してください",StopReason.CAPTURE_TIMEOUT) }
     private fun now() = SystemClock.elapsedRealtime()
@@ -78,7 +81,14 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
     private fun poll() {
         if (stage == Stage.STOPPED) return
         if (!port.foreground()) { stop("GOが前面でなくなったため停止しました",StopReason.FOREGROUND_LOST); return }
-        if (busy) { schedule(); return }
+        if (busy) {
+            if ((stage == Stage.READING && appraisalWaitSince >= 0L &&
+                    now() - appraisalWaitSince >= APPRAISAL_WAIT_TIMEOUT_MS) ||
+                (stage == Stage.REVALIDATING && now() >= validationDeadline)) {
+                stop("評価画面の操作応答を確認できません。画面を確認して再開してください", StopReason.FRAME_UNAVAILABLE)
+            } else schedule()
+            return
+        }
         val frame = port.frame()?.takeIf { now() - it.at in 0..800 }
         if (stage == Stage.REVALIDATING) {
             val finishingHold = holdResult != null
@@ -106,8 +116,16 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
             }
             if (now() >= validationDeadline) { stop("解析後の画面を再確認できません。現在の個体を表示して再開してください",StopReason.FRAME_UNAVAILABLE); return }
             if (finishingHold && frame?.appraisal != true) {
+                // No fresh frame means we cannot safely decide where to tap.
+                if (frame == null) { schedule(); return }
+                if (appraisalOpens >= MAX_APPRAISAL_OPENS) {
+                    stop("評価画面の再表示を確認できません。手動で確認して再開してください", StopReason.FRAME_UNAVAILABLE)
+                    return
+                }
+                appraisalOpens++
                 busy=true
                 port.openAppraisal { _ ->
+                    if (stage == Stage.STOPPED) return@openAppraisal
                     busy=false
                     if(stage==Stage.REVALIDATING)schedule(600)
                 }
@@ -117,9 +135,20 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
             schedule(); return
         }
         if (stage == Stage.MOVING) {
-            if (frame == null || frame.at <= moveAt) { schedule(); return }
+            if (frame == null || frame.at <= moveAt) {
+                if (now() - moveAt >= MOVE_FRAME_TIMEOUT_MS)
+                    stop("スワイプ後の画像を確認できません。現在の個体を表示して再開してください", StopReason.FRAME_UNAVAILABLE)
+                else schedule()
+                return
+            }
             val before = baseline ?: return stop("移動前の画面を確認できません",StopReason.MISSING_BASELINE)
-            if (!frame.appraisal) { candidate = null; unchangedAt = 0L; schedule(); return }
+            if (!frame.appraisal) {
+                candidate = null; unchangedAt = 0L
+                if (now() - moveAt >= MOVE_FRAME_TIMEOUT_MS)
+                    stop("スワイプ後の評価画面を確認できません。現在の個体を表示して再開してください", StopReason.FRAME_UNAVAILABLE)
+                else schedule()
+                return
+            }
             if (!before.signature.same(frame.signature)) {
                 unchangedAt = 0L
                 val previous = candidate
@@ -139,6 +168,10 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
             schedule(); return
         }
         if (stage != Stage.READING) { schedule(); return }
+        if (frame?.appraisal == true) {
+            appraisalWaitSince = -1L
+            appraisalOpens = 0
+        }
         if(retries>0 && frame?.appraisal!=true) {
             if(now()>=validationDeadline)stop("再読取する画面を確認できません。現在の個体を表示して再開してください",StopReason.FRAME_UNAVAILABLE)
             else schedule()
@@ -150,6 +183,18 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
                 else schedule()
                 return
             }
+            if (appraisalWaitSince < 0L) appraisalWaitSince = now()
+            if (now() - appraisalWaitSince >= APPRAISAL_WAIT_TIMEOUT_MS) {
+                stop("評価画面を確認できません。現在の画面を確認して再開してください", StopReason.FRAME_UNAVAILABLE)
+                return
+            }
+            // A missing/stale screenshot is not permission to tap an unknown UI.
+            if (frame == null) { schedule(); return }
+            if (appraisalOpens >= MAX_APPRAISAL_OPENS) {
+                stop("評価画面を開けませんでした。現在の画面を確認して再開してください", StopReason.FRAME_UNAVAILABLE)
+                return
+            }
+            appraisalOpens++
             busy = true
             port.openAppraisal { ok ->
                 if (stage == Stage.STOPPED) return@openAppraisal
@@ -276,6 +321,7 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
                 }
                 holdResult = result
                 candidate = null
+                appraisalOpens = 0
                 holdFinishedAt = now()
                 mismatch = null
                 validationDeadline = now() + 12_000L
@@ -292,6 +338,9 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
     companion object {
         const val MAX_ATTEMPTS = 3
         private const val MAX_CP_ATTEMPTS = 2
+        private const val MAX_APPRAISAL_OPENS = 3
+        private const val APPRAISAL_WAIT_TIMEOUT_MS = 10_000L
+        private const val MOVE_FRAME_TIMEOUT_MS = 12_000L
     }
     private fun advance(current:Frame) {
         baseline=current
