@@ -19,6 +19,7 @@ internal class GoPrevResetWorkflow(handler:Handler,private val query:String,priv
         fun searchStillActive(scene: GoWorkflowPolicy.Scene, query: String): Boolean =
             GoWorkflowPolicy.showsPrevSearch(scene, query)
         fun exitSelection(scene:GoWorkflowPolicy.Scene):Boolean = false
+        fun fallbackFirstCard(scene: GoWorkflowPolicy.Scene): GoWorkflowPolicy.Box? = null
         fun hint(message:String)
         fun stopped(stage: String) {}
         fun stopped(stage: String, reason: String, learningTarget: GoLearningTarget?) { stopped(stage) }
@@ -234,7 +235,7 @@ internal class GoPrevResetWorkflow(handler:Handler,private val query:String,priv
             if(s!=null)when(stage){
                 1->{
                     if(emptyConfirmed(s)){finish(true,"prev付きの対象は0件です");return@observe}
-                    if(s.list && s.count!=null && s.count>0 && s.cards.isNotEmpty()){
+                    if(s.list && s.count!=null && s.count>0 && (s.cards.isNotEmpty() || port.fallbackFirstCard(s)!=null)){
                         val old=previous;previous=s
                         if(old!=null && GoWorkflowPolicy.sameResults(old,s,compareLabels=false)){
                             total=s.count
@@ -292,14 +293,14 @@ internal class GoPrevResetWorkflow(handler:Handler,private val query:String,priv
         }
     }
     private fun holdFirstResult(scene: GoWorkflowPolicy.Scene) {
-        val card = scene.cards.firstOrNull() ?: return
+        val cardBox = scene.cards.firstOrNull()?.box ?: port.fallbackFirstCard(scene) ?: return
         if (holdAttempts >= 3) {
             finish(false, "${tagName}解除の対象を選択できませんでした。検索結果を確認してください")
             return
         }
         holdAttempts++
         lastHoldAt = clock.now()
-        if (port.hold(card.box)) {
+        if (port.hold(cardBox)) {
             heldFrom = scene
             stage = 2
         }

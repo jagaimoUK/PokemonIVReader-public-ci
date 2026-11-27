@@ -31,14 +31,16 @@ class ReaderSetupChecklistTest {
         assertTrue(summary.dialogMessage().contains("画面を囲んで登録"))
     }
 
-    @Test fun marksAppraisalAndBoxGridReadyOnceSaved() {
+    @Test fun marksAppraisalBoxGridAndFirstCardReadyOnceSaved() {
         val store = GoButtonTemplateStore(context)
         assertTrue(store.saveAppraisalPanel(android.graphics.Rect(100, 500, 900, 1200), 1080, 2400))
         assertTrue(store.saveBoxGrid(android.graphics.Rect(20, 400, 1060, 2100), 1080, 2400))
+        assertTrue(store.saveFirstCard(android.graphics.Rect(40, 420, 340, 740), 1080, 2400))
 
         val summary = ReaderSetupChecklist.evaluate(context)
         val missingIds = summary.missing.map { it.id }
         assertFalse("appraisal_panel" in missingIds)
         assertFalse("box_grid" in missingIds)
+        assertFalse("first_card" in missingIds)
     }
 }

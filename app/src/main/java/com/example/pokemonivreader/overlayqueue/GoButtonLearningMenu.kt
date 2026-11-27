@@ -86,13 +86,17 @@ internal object GoButtonLearningMenu {
                     anchor.post {
                         if (!anchor.isAttachedToWindow || isLocked()) return@post
                         val detail = PopupMenu(context, anchor).apply {
-                            if (role.target == GoLearningTarget.APPRAISAL_PANEL || role.target == GoLearningTarget.BOX_GRID) {
+                            if (role.target?.isRegionTarget == true) {
                                 menu.action("範囲を設定", true) { learn(role, null, false) }
                                 if (count > 0) {
                                     menu.action("範囲を削除", true) {
-                                        val cleared = if (role.target == GoLearningTarget.BOX_GRID) store.clearBoxGrid()
-                                            else store.clearAppraisalPanel()
-                                        val label = if (role.target == GoLearningTarget.BOX_GRID) "ボックス一覧の範囲" else "評価パネルの範囲"
+                                        val cleared = when (role.target) {
+                                            GoLearningTarget.BOX_GRID -> store.clearBoxGrid()
+                                            GoLearningTarget.FIRST_CARD -> store.clearFirstCard()
+                                            else -> store.clearAppraisalPanel()
+                                        }
+                                        val label = if (role.target == GoLearningTarget.APPRAISAL_PANEL) "評価パネルの範囲"
+                                            else role.title
                                         onStatus(if (cleared) "${label}を削除しました" else "${label}を削除できませんでした")
                                     }
                                 }
