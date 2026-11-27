@@ -210,21 +210,36 @@ internal class ReaderQuickMenuPopup(
             root.addView(autoSelRow, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(7) })
         }
 
+        val boxState = com.example.pokemonivreader.BoxReverseCheckpoint(context).load()
+        if (boxState != null && (autoRead != null || resumeAutoRead != null)) {
+            val cpLabel = boxState.nextCp?.let { "CP$it" } ?: "CP不明"
+            val banner = TextView(context).apply {
+                text = "📦 ボックスCP保持中\n保存 ${boxState.saved}/${boxState.total}体・残 ${boxState.remaining}体 (次: $cpLabel)"
+                textSize = 11.5f
+                gravity = Gravity.CENTER
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+                setTextColor(Color.rgb(220, 245, 230))
+                background = capsule(Color.rgb(34, 78, 56))
+            }
+            root.addView(banner, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+        }
+
         if (autoRead != null) root.addView(textButton("自動読み取りを開始 ←") {
             dismiss(); autoRead.invoke()
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
 
         if (resumeAutoRead != null) {
-            val boxState = com.example.pokemonivreader.BoxReverseCheckpoint(context).load()
             val resumeLabel = if (boxState != null) {
                 val cpLabel = boxState.nextCp?.let { "CP$it" } ?: "CP不明"
-                "ボックス読取を再開 (残${boxState.remaining}・$cpLabel) ←"
+                "📦 ボックス読取を再開 (残${boxState.remaining}・$cpLabel) ←"
             } else {
                 "自動読み取りを再開 ←"
             }
-            root.addView(textButton(resumeLabel) {
+            val resumeBtn = textButton(resumeLabel) {
                 dismiss()
-                if (isAutoSelectionEnabled(context)) {
+                if (boxState != null) {
+                    resumeAutoRead.invoke()
+                } else if (isAutoSelectionEnabled(context)) {
                     val state = com.example.pokemonivreader.ReaderAutomationStore(context)
                     if (state.state == "ready") OverlayCopyQueueController.get(context).startAutomationBatch()
                     else if (state.pending() != null) com.example.pokemonivreader.ReaderWebTransfer.automate(context, true)
@@ -232,7 +247,11 @@ internal class ReaderQuickMenuPopup(
                 } else {
                     resumeAutoRead.invoke()
                 }
-            }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
+            }
+            if (boxState != null) {
+                resumeBtn.background = capsule(Color.rgb(46, 139, 87))
+            }
+            root.addView(resumeBtn, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
         }
 
         if (boxRead != null) root.addView(textButton("ボックスCP読み取り ←") {
