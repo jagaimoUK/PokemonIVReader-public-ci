@@ -32,6 +32,8 @@ internal class ReaderQuickMenuPopup(
     private val context: Context,
     private val autoRead: (() -> Unit)? = null,
     private val resumeAutoRead: (() -> Unit)? = null,
+    private val boxRead: (() -> Unit)? = null,
+    private val manageDifficultSpecies: (() -> Unit)? = null,
     private val setCatchEnabled: ((Boolean) -> Unit)? = null,
     private val teachCatchSample: (() -> Unit)? = null,
     private val liveThrow: (() -> Pair<String, () -> Unit>)? = null,
@@ -224,6 +226,14 @@ internal class ReaderQuickMenuPopup(
             }
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
 
+        if (boxRead != null) root.addView(textButton("ボックスCP読み取り ←") {
+            dismiss(); boxRead.invoke()
+        }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
+
+        if (manageDifficultSpecies != null) root.addView(textButton("CP困難ポケモン登録") {
+            dismiss(); manageDifficultSpecies.invoke()
+        }, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(7) })
+
         if (learnButtons != null) root.addView(textButton("ボタンを学習") {
             dismiss()
             learnButtons.invoke(anchor)
@@ -264,6 +274,7 @@ internal class ReaderQuickMenuPopup(
         val screenHeight = context.resources.displayMetrics.heightPixels
         val width = dp(224).coerceAtMost(screenWidth)
         val approxHeight = dp((if (autoRead != null || resumeAutoRead != null) 490 else 340) +
+            (if (boxRead != null) 55 else 0) + (if (manageDifficultSpecies != null) 51 else 0) +
             (if (setCatchEnabled != null) 55 else 0) + (if (teachCatchSample != null) 55 else 0) + (if (liveThrow != null) 55 else 0) +
             (if (learnButtons != null) 55 else 0))
         val x = (location[0] + anchor.width - width).coerceIn(0, (screenWidth - width).coerceAtLeast(0))

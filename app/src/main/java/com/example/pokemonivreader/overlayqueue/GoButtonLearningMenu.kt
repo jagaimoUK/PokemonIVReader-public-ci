@@ -41,6 +41,9 @@ internal object GoButtonLearningMenu {
             menu.action("評価パネルの範囲を学習", !isLocked()) {
                 requestLearning(store.role(GoLearningTarget.APPRAISAL_PANEL), null, false)
             }
+            menu.action("ボックス一覧の範囲を学習", !isLocked()) {
+                requestLearning(store.role(GoLearningTarget.BOX_GRID), null, false)
+            }
             menu.addSubMenu("キーボード操作を学習").apply {
                 GoCleanupKeyboard.Control.entries.forEach { control ->
                     val role = store.role(control.target)
@@ -97,14 +100,14 @@ internal object GoButtonLearningMenu {
                     anchor.post {
                         if (!anchor.isAttachedToWindow || isLocked()) return@post
                         val detail = PopupMenu(context, anchor).apply {
-                            if (role.target == GoLearningTarget.APPRAISAL_PANEL) {
+                            if (role.target == GoLearningTarget.APPRAISAL_PANEL || role.target == GoLearningTarget.BOX_GRID) {
                                 menu.action("範囲を設定", true) { learn(role, null, false) }
                                 if (count > 0) {
                                     menu.action("範囲を削除", true) {
-                                        onStatus(
-                                            if (store.clearAppraisalPanel()) "評価パネルの範囲を削除しました"
-                                            else "評価パネルの範囲を削除できませんでした"
-                                        )
+                                        val cleared = if (role.target == GoLearningTarget.BOX_GRID) store.clearBoxGrid()
+                                            else store.clearAppraisalPanel()
+                                        val label = if (role.target == GoLearningTarget.BOX_GRID) "ボックス一覧の範囲" else "評価パネルの範囲"
+                                        onStatus(if (cleared) "${label}を削除しました" else "${label}を削除できませんでした")
                                     }
                                 }
                             } else {

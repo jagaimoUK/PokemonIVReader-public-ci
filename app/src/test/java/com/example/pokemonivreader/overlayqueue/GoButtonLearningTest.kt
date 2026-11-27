@@ -506,13 +506,13 @@ class GoButtonLearningTest {
         )
         val rootMenu = menus.last().menu
         assertEquals(
-            listOf("ボタンを囲んで登録", "評価パネルの範囲を学習", "キーボード操作を学習", "登録済みボタン"),
+            listOf("ボタンを囲んで登録", "評価パネルの範囲を学習", "ボックス一覧の範囲を学習", "キーボード操作を学習", "登録済みボタン"),
             (0 until rootMenu.size()).map { rootMenu.getItem(it).title.toString() }
         )
         assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(0).itemId, 0))
         assertEquals(listOf(Triple(null, null, false)), requests)
 
-        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(3).itemId, 0))
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(4).itemId, 0))
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         val rolesMenu = menus.last().menu
         val appraisalIndex = (0 until rolesMenu.size()).first {
@@ -671,7 +671,7 @@ class GoButtonLearningTest {
         assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(1).itemId, 0))
         assertEquals(listOf(Triple(store.role(GoLearningTarget.APPRAISAL_PANEL), null, false)), requests)
 
-        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(3).itemId, 0))
+        assertTrue(rootMenu.performIdentifierAction(rootMenu.getItem(4).itemId, 0))
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         val rolesMenu = menus.last().menu
         val panelIndex = (0 until rolesMenu.size()).first {
