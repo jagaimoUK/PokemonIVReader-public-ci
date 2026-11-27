@@ -149,8 +149,6 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             return true
         }
 
-        internal enum class CurrentGoScreen { BOX_LIST, DETAIL_OR_APPRAISAL, TAG_LIST, OTHER, UNAVAILABLE }
-
         internal fun detectCurrentScreen(result: (CurrentGoScreen) -> Unit) {
             val service = active
             if (service == null || !service.gameInForeground()) {
@@ -204,6 +202,8 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             return true
         }
     }
+
+    internal enum class CurrentGoScreen { BOX_LIST, DETAIL_OR_APPRAISAL, TAG_LIST, OTHER, UNAVAILABLE }
 
     private val main = Handler(Looper.getMainLooper())
     private val screenshotScheduler = GoScreenshotScheduler(main)
