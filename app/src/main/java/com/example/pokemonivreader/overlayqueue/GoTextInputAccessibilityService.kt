@@ -308,7 +308,7 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                     // appraisal sentence inside the bottom speech bubble.
                     val introduction = scene.lines.firstOrNull {
                         it.box.top > scene.height * .76f &&
-                            Regex("(?i)(?:take a look at|shall we|個体値を調べ|ポケモンを調べ)").containsMatchIn(it.text)
+                            Regex("(?i)(?:take a look at|shall we|let'?s see|個体値を調べ|ポケモンを調べ|調べよう|調べてみる|見てみよう|強さを調べ)").containsMatchIn(it.text)
                     }?.box
                     val box = labels.singleOrNull()?.box ?: introduction ?: scene.appraisal ?: scene.menu
                     if (box == null || OverlayCopyQueueController.isCovered(Rect(box.left, box.top, box.right, box.bottom))) {

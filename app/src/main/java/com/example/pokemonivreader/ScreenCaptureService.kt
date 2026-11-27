@@ -141,6 +141,7 @@ class ScreenCaptureService : Service() {
     private var overlay: TextView? = null
     private var shadowOverlayRoot: android.widget.LinearLayout? = null
     private var readerQuickMenu: ReaderQuickMenuPopup? = null
+    private var resumePopup: ReaderResumePopup? = null
     private var learningPopup: PopupMenu? = null
     private var learningDialog: AlertDialog? = null
     private var learningRequestGeneration = 0
@@ -836,9 +837,17 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startAutomaticReading(automation:Boolean=false,resume:Boolean=false) {
+        resumePopup?.dismiss()
         if (GoTextInputAccessibilityService.isCatchTrialRunning()) {
             Toast.makeText(this, "捕獲をオフにしてから読み取ってください", Toast.LENGTH_SHORT).show()
             return
+        }
+        if (resume) {
+            val boxSaved = BoxReverseCheckpoint(this).load()
+            if (boxSaved != null) {
+                startBoxReverseReading(boxSaved.toResumeState())
+                return
+            }
         }
         if (throwRecording != null || autoReading || projection == null || pipeline.size() != 0 || appraisalReview.isShowing) {
             runCatching { readerDiagnostics.setupFailure(ReaderDiagnostics.SetupFailure.BUSY) }
@@ -871,6 +880,8 @@ class ScreenCaptureService : Service() {
         captureGate.clear();previousScene=null;cpFrames.clear()
         // Keep MediaProjection sampling active while our own reader is invisible.
         shadowOverlayRoot?.visibility = android.view.View.INVISIBLE
+        var lastStopReason: ReaderAutoScan.StopReason? = null
+        var lastStopSaved = 0
         autoScan = ReaderAutoScan(main, object : ReaderAutoScan.Port {
             override fun restore() = previous
             override fun checkpoint(value: ReaderAutoScan.Checkpoint) = checkpoint.save(value)
@@ -906,6 +917,8 @@ class ScreenCaptureService : Service() {
             override fun swipeLeft(result: (Boolean) -> Unit) = control.swipeLeft(result)
             override fun hint(message: String) { updateNotification(message) }
             override fun stopped(stage:ReaderAutoScan.Stage,reason:ReaderAutoScan.StopReason,saved:Int,retries:Int) {
+                lastStopReason = reason
+                lastStopSaved = saved
                 runCatching { readerDiagnostics.scanStopped(stage,reason,saved,retries) }
             }
         }) { message ->
@@ -921,6 +934,15 @@ class ScreenCaptureService : Service() {
                 // an end OR ambiguity, never proof that unread individuals were scanned.
                 if(message.startsWith("左スワイプ後の移動なし")&&session.records().isNotEmpty())
                     ReaderWebTransfer.automate(this)
+            }
+            if (lastStopReason != ReaderAutoScan.StopReason.NO_MOVE && checkpoint.load() != null) {
+                val popup = resumePopup ?: ReaderResumePopup(this).also { resumePopup = it }
+                popup.showAutoScanResume(lastStopSaved, message) {
+                    startAutomaticReading(
+                        automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this),
+                        resume = true
+                    )
+                }
             }
         }.also {
             suggestedSpeciesInSession.clear()
@@ -1020,7 +1042,10 @@ class ScreenCaptureService : Service() {
         dialog.show()
     }
 
-    private fun startBoxReverseReading() {
+    private fun startBoxReverseReading() = startBoxReverseReading(null)
+
+    private fun startBoxReverseReading(resumeState: BoxReverseAutoScan.ResumeState?) {
+        resumePopup?.dismiss()
         if (GoTextInputAccessibilityService.isCatchTrialRunning()) {
             Toast.makeText(this, "捕獲をオフにしてから読み取ってください", Toast.LENGTH_SHORT).show()
             return
@@ -1035,7 +1060,7 @@ class ScreenCaptureService : Service() {
             return
         }
         val boxGrid = com.example.pokemonivreader.overlayqueue.GoButtonTemplateStore(this).loadBoxGrid()
-        if (boxGrid == null) {
+        if (resumeState == null && boxGrid == null) {
             updateNotification("先に「⋯ → ボタンを学習 → ボックス一覧の範囲を学習」を設定してください")
             Toast.makeText(this, "先に「ボタンを学習 → ボックス一覧の範囲を学習」を設定してください", Toast.LENGTH_LONG).show()
             return
@@ -1049,7 +1074,8 @@ class ScreenCaptureService : Service() {
         }
         val automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this)
         val session = ReaderAutomationStore(this)
-        if (automation) session.beginReading()
+        if (automation && resumeState == null) session.beginReading()
+        val boxCheckpoint = BoxReverseCheckpoint(this)
         readerControl = control
         autoReading = true; automaticFrame = null
         captureGate.clear(); previousScene = null; cpFrames.clear()
@@ -1058,7 +1084,11 @@ class ScreenCaptureService : Service() {
             override fun foreground() = projection != null && control.foreground()
             override fun frame() = automaticFrame
             override fun readBoxPage(result: (BoxReverseAutoScan.BoxPageResult) -> Unit) {
-                boxPageRequest = boxGrid to result
+                val grid = boxGrid ?: run {
+                    result(BoxReverseAutoScan.BoxPageResult(emptyList(), null))
+                    return
+                }
+                boxPageRequest = grid to result
             }
             override fun scrollBoxDown(result: (Boolean) -> Unit) = control.scrollBoxDown(result)
             override fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit) = control.tapPoint(x, y, result)
@@ -1072,6 +1102,14 @@ class ScreenCaptureService : Service() {
                     session.saved(recordId)
                     session.markHold(recordId, verified = true)
                 }
+            }
+            override fun saveCheckpoint(state: BoxReverseAutoScan.ResumeState) {
+                boxCheckpoint.save(BoxReverseCheckpoint.State(
+                    state.collectedCps, state.cpIndex, state.saved, state.lastTapPoint
+                ))
+            }
+            override fun clearCheckpoint() {
+                boxCheckpoint.clear()
             }
             override fun hint(message: String) { updateNotification(message) }
         }) { message, completed ->
@@ -1088,7 +1126,29 @@ class ScreenCaptureService : Service() {
                     ReaderWebTransfer.automate(this)
                 }
             }
-        }.also { it.start() }
+            if (!completed) {
+                val savedBox = boxCheckpoint.load()
+                if (savedBox != null) {
+                    val popup = resumePopup ?: ReaderResumePopup(this).also { resumePopup = it }
+                    popup.showBoxResume(
+                        state = savedBox,
+                        stopReasonText = message,
+                        onResume = { resumeTarget -> startBoxReverseReading(resumeTarget.toResumeState()) },
+                        onSkip = {
+                            val current = boxCheckpoint.load() ?: return@showBoxResume null
+                            val next = current.skipped()
+                            if (next != null) {
+                                boxCheckpoint.save(next)
+                                next
+                            } else {
+                                boxCheckpoint.clear()
+                                null
+                            }
+                        }
+                    )
+                }
+            }
+        }.also { it.start(resumeState) }
     }
 
     private fun overlayOverlapsCrop(): Boolean {
@@ -1394,6 +1454,8 @@ class ScreenCaptureService : Service() {
     override fun onDestroy() {
         autoScan?.cancel()
         boxReverseScan?.cancel()
+        resumePopup?.dismiss()
+        resumePopup = null
         boxSuggestionDialog?.dismiss()
         boxSuggestionDialog = null
         boxPageRequest = null

@@ -181,8 +181,23 @@ internal class ReaderAutoScan(private val handler: Handler, private val port: Po
         }
         if (frame?.appraisal != true) {
             if (restored != null) {
-                if (now() >= validationDeadline) stop("前回の個体の評価画面を開いてから再開してください", StopReason.CHECKPOINT_MISMATCH)
-                else schedule()
+                if (now() >= validationDeadline) {
+                    stop("前回の個体の評価画面を開いてから再開してください", StopReason.CHECKPOINT_MISMATCH)
+                    return
+                }
+                if (frame == null || appraisalOpens >= MAX_APPRAISAL_OPENS) {
+                    schedule()
+                    return
+                }
+                appraisalOpens++
+                busy = true
+                port.openAppraisal { ok ->
+                    if (stage == Stage.STOPPED) return@openAppraisal
+                    busy = false
+                    port.hint(if (ok) "前回の評価画面を確認中" else "前回の個体メニューを確認中")
+                    schedule(if (ok) 900L else 700L)
+                }
+                if (busy) schedule()
                 return
             }
             if (appraisalWaitSince < 0L) appraisalWaitSince = now()
