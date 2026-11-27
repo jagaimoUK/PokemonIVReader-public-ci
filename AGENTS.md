@@ -19,6 +19,12 @@ This file applies to all AI coding assistants and automation operating in this r
 - Do **not** use the ChatGPT-connected PvPoke MCP, including indirect tool calls.
 - Never alter the original Private repos, production deployments, signing secrets or repository visibility without explicit authorization.
 
+## PR, CI, and APK release batching policy (2026-11-27)
+- **Batch related small fixes into 1 PR**: Group related small fixes for the same feature/screen (2–4 items) into a single feature branch and PR, separating each fix into its own logical commit so issues can be bisected or reverted cleanly while running Public CI only once.
+- **Separate unrelated changes**: Keep distinct domains (e.g., CI/workflow changes vs. app features, or Web vs. Android) in separate PRs.
+- **APK release on demand only**: Merge passing PRs to `main` without triggering `android-signed-release.yml` on every fix. Run `gh workflow run android-signed-release.yml --repo jagaimoUK/PokemonIVReader-public-ci --ref main` **only** when the user requests an APK for device testing.
+- **No manual version-bump commits**: `android-signed-release.yml` auto-resolves `versionCode` / `versionName` via `github.run_number` (`ANDROID_VERSION_CODE` / `ANDROID_VERSION_NAME` env overrides in `app/build.gradle.kts`) and runs `:app:assembleRelease` + signing/certificate verification without re-running unit tests already verified by PR CI.
+
 ## User-facing test & operation instructions (2026-11-23)
 - When guiding the user through physical device tests or manual operations, **do not omit subjects or objects**: explicitly state **which app** (`厳選アプリ (Web)` / `読み取りアプリ (Android)` / `Pokémon GO`), **which screen/collapsible/input/button**, and **where/what exact label or UI change indicates pass vs. block/conflict**.
 - Focus concretely on points where the user could get stuck or confuse apps/screens, rather than making every trivial step verbose.
