@@ -88,4 +88,32 @@ class GoAutomationEntryTest {
         assertEquals(listOf(close, close), port.taps)
         assertEquals(listOf(false), outcomes)
     }
+
+    @Test fun dismissesOpenAppraisalThenClosesDetailToReachList() {
+        var dismissals = 0
+        val port = object : GoAutomationEntry.Port {
+            var currentScene: GoWorkflowPolicy.Scene? = GoWorkflowPolicy.Scene(detail = true, close = null)
+            val taps = mutableListOf<GoWorkflowPolicy.Box>()
+            override fun current() = true
+            override fun foreground() = true
+            override fun observe(result: (GoWorkflowPolicy.Scene?) -> Unit) = result(currentScene)
+            override fun tapClose(box: GoWorkflowPolicy.Box): Boolean {
+                taps += box
+                currentScene = GoWorkflowPolicy.Scene(list = true)
+                return true
+            }
+            override fun dismissOverlay(): Boolean {
+                dismissals++
+                currentScene = GoWorkflowPolicy.Scene(detail = true, close = close)
+                return true
+            }
+            override fun hint(message: String) {}
+        }
+        val outcomes = mutableListOf<Boolean>()
+        GoAutomationEntry(Handler(Looper.getMainLooper()), port) { ok, _ -> outcomes += ok }.start()
+        advance(1_500)
+        assertEquals(1, dismissals)
+        assertEquals(listOf(close), port.taps)
+        assertEquals(listOf(true), outcomes)
+    }
 }

@@ -149,6 +149,26 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             return true
         }
 
+        internal enum class CurrentGoScreen { BOX_LIST, DETAIL_OR_APPRAISAL, TAG_LIST, OTHER, UNAVAILABLE }
+
+        internal fun detectCurrentScreen(result: (CurrentGoScreen) -> Unit) {
+            val service = active
+            if (service == null || !service.gameInForeground()) {
+                result(CurrentGoScreen.UNAVAILABLE)
+                return
+            }
+            service.observeScene { scene ->
+                val screen = when {
+                    scene == null -> CurrentGoScreen.UNAVAILABLE
+                    scene.tagList -> CurrentGoScreen.TAG_LIST
+                    scene.detail -> CurrentGoScreen.DETAIL_OR_APPRAISAL
+                    scene.list -> CurrentGoScreen.BOX_LIST
+                    else -> CurrentGoScreen.OTHER
+                }
+                result(screen)
+            }
+        }
+
         internal fun requestCleanupSearch(value: String, result: (Boolean, String) -> Unit): Boolean {
             val service = active ?: return false
             val catalog = com.example.pokemonivreader.PokemonCatalog.get(service)
@@ -810,6 +830,8 @@ class GoTextInputAccessibilityService : AccessibilityService() {
             override fun observe(result: (GoWorkflowPolicy.Scene?) -> Unit) = observeScene(result)
             override fun tapClose(box: GoWorkflowPolicy.Box) =
                 tapDetectedLabel(Rect(box.left, box.top, box.right, box.bottom))
+            override fun dismissOverlay() =
+                gameInForeground() && !keyboardVisible() && performGlobalAction(GLOBAL_ACTION_BACK)
             override fun hint(message: String) = OverlayCopyQueueController.showInputHint(message)
         }) { ok, message ->
             if (!ok) metrics.recordStop("BULK", "BATCH_ENTRY", GoAutomationMetrics.failureEvent(message),
@@ -2650,33 +2672,8 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                 (area.right - frame.displayBounds.left) * bitmap.width / frame.displayBounds.width(),
                 (area.bottom - frame.displayBounds.top) * bitmap.height / frame.displayBounds.height()
             )
-            if (control != null) {
-                val allowed = GoKeyboardVisual.regions(control, frame.displayBounds, frame.imeBounds).map(::toPixels)
-                if (allowed.isEmpty()) {
-                    bitmap.recycle()
-                    reportHint("キーボードを画面下に表示してから登録してください")
-                    return@captureGameScreen
-                }
-                // Keep GO and the rest of the keyboard out of the teaching frame.
-                val redacted = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(redacted)
-                canvas.drawColor(Color.BLACK)
-                allowed.forEach { canvas.drawBitmap(bitmap, it, it, null) }
-                bitmap.recycle()
-                showLearningFrame(id, redacted, role, replacement, preview, emptyList(), allowed, onFeedback = onFeedback)
-                return@captureGameScreen
-            }
             val excluded = frame.imeBounds.map(::toPixels)
-            // Keep the visible GO portion, but don't show or persist keyboard content.
-            if (excluded.isNotEmpty()) {
-                val redacted = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-                bitmap.recycle()
-                if (redacted == null) return@captureGameScreen
-                val canvas = Canvas(redacted)
-                val paint = Paint().apply { color = Color.BLACK }
-                excluded.forEach { canvas.drawRect(it, paint) }
-                showLearningFrame(id, redacted, role, replacement, preview, excluded, onFeedback = onFeedback)
-            } else showLearningFrame(id, bitmap, role, replacement, preview, excluded, onFeedback = onFeedback)
+            showLearningFrame(id, bitmap, role, replacement, preview, excluded, onFeedback = onFeedback)
         }
     }
 

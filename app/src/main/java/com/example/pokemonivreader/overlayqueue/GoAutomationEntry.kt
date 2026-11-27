@@ -15,6 +15,7 @@ internal class GoAutomationEntry(
         fun waitingHint(): String = "GOを開いて整理を再開してください"
         fun observe(result: (GoWorkflowPolicy.Scene?) -> Unit)
         fun tapClose(box: GoWorkflowPolicy.Box): Boolean
+        fun dismissOverlay(): Boolean = false
         fun hint(message: String)
     }
 
@@ -26,6 +27,7 @@ internal class GoAutomationEntry(
     private var observationEpoch = 0
     private var closeAt: Long? = null
     private var closeAttempts = 0
+    private var dismissAttempts = 0
     private var blocker = "GOを開いて整理を再開してください"
 
     fun start() = pump.wake()
@@ -67,15 +69,31 @@ internal class GoAutomationEntry(
                     scene.bulkTag == null && (scene.list || scene.searchSuggestions) ->
                     finish(true, "GOのポケモン一覧を確認しました")
                 scene.rename -> finish(false, "GOの名前変更画面を閉じてから整理を再開してください")
+                scene.tagList -> {
+                    blocker = "タグ一覧を閉じてポケモン一覧に戻ってから整理を再開してください"
+                    val last = closeAt
+                    if (dismissAttempts < 2 && (last == null || SystemClock.elapsedRealtime() - last >= 1_200L)) {
+                        if (port.dismissOverlay()) {
+                            dismissAttempts++
+                            closeAt = SystemClock.elapsedRealtime()
+                            port.hint("タグ一覧を閉じています。ポケモン一覧を確認中です")
+                        }
+                    }
+                }
                 needsClose(scene) -> {
                     blocker = "詳細画面の×でポケモン一覧に戻ってから整理を再開してください"
                     val last = closeAt
                     val close = scene.close
-                    if (close != null && closeAttempts < 2 &&
-                        (last == null || SystemClock.elapsedRealtime() - last >= 1_200L)) {
-                        closeAttempts++
-                        closeAt = SystemClock.elapsedRealtime()
-                        if (port.tapClose(close)) port.hint("詳細画面を閉じています。ポケモン一覧を確認中です")
+                    if (last == null || SystemClock.elapsedRealtime() - last >= 1_200L) {
+                        if (close != null && closeAttempts < 2) {
+                            closeAttempts++
+                            closeAt = SystemClock.elapsedRealtime()
+                            if (port.tapClose(close)) port.hint("詳細画面を閉じています。ポケモン一覧を確認中です")
+                        } else if (close == null && dismissAttempts < 2 && port.dismissOverlay()) {
+                            dismissAttempts++
+                            closeAt = SystemClock.elapsedRealtime()
+                            port.hint("評価画面を閉じています。ポケモン一覧を確認中です")
+                        }
                     }
                 }
                 else -> blocker = "GOでポケモン一覧を開いて整理を再開してください"
