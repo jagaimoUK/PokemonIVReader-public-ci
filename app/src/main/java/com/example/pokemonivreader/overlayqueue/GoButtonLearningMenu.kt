@@ -95,7 +95,8 @@ internal object GoButtonLearningMenu {
                                             GoLearningTarget.FIRST_CARD -> store.clearFirstCard()
                                             else -> store.clearAppraisalPanel()
                                         }
-                                        val label = role.title
+                                        val label = if (role.target == GoLearningTarget.APPRAISAL_PANEL) "評価パネルの範囲"
+                                            else role.title
                                         onStatus(if (cleared) "${label}を削除しました" else "${label}を削除できませんでした")
                                     }
                                 }
