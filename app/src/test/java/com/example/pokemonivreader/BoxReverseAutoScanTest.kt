@@ -195,4 +195,60 @@ class BoxReverseAutoScanTest {
         assertTrue(doneResult?.second == true)
         assertTrue(doneResult?.first?.contains("保存 3 体") == true)
     }
+
+    @Test fun unchangedFrameAfterSwipeRetriesAndPreservesCheckpointInsteadOfCompletingEarly() {
+        val main = Handler(Looper.getMainLooper())
+        val sig = signature(0x22222222)
+        var swipesRight = 0
+        var savedCheckpoint: BoxReverseAutoScan.ResumeState? = null
+        var cleared = false
+        var stoppedReason: BoxReverseAutoScan.StopReason? = null
+        var doneResult: Pair<String, Boolean>? = null
+
+        val port = object : BoxReverseAutoScan.Port {
+            override fun foreground() = true
+            override fun frame() = ReaderAutoScan.Frame(sig, SystemClock.elapsedRealtime(), true)
+            override fun readBoxPage(result: (BoxReverseAutoScan.BoxPageResult) -> Unit) {
+                result(BoxReverseAutoScan.BoxPageResult(
+                    listOf(BoxGridCpReader.BoxRow(listOf(500, 400, 300), 100)),
+                    750f to 200f
+                ))
+            }
+            override fun scrollBoxDown(result: (Boolean) -> Unit) = result(true)
+            override fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit) = result(true)
+            override fun openAppraisal(result: (Boolean) -> Unit) = result(true)
+            override fun capture(recordId: String, cpOverride: Int?, result: (OverlayIvProcessor.Outcome) -> Unit) {
+                result(OverlayIvProcessor.Outcome("ok", true, "0,15,15", cpOverride, OverlayIvProcessor.Phase.SAVED, recordId))
+            }
+            override fun swipeRight(result: (Boolean) -> Unit) {
+                swipesRight++
+                result(true)
+            }
+            override fun saveCheckpoint(state: BoxReverseAutoScan.ResumeState) {
+                savedCheckpoint = state
+            }
+            override fun clearCheckpoint() {
+                cleared = true
+                savedCheckpoint = null
+            }
+            override fun hint(message: String) {}
+            override fun stopped(stage: BoxReverseAutoScan.Stage, reason: BoxReverseAutoScan.StopReason, saved: Int, collectedCps: Int) {
+                stoppedReason = reason
+            }
+        }
+
+        val scan = BoxReverseAutoScan(main, port) { msg, completed ->
+            doneResult = msg to completed
+        }
+        scan.start(BoxReverseAutoScan.ResumeState(listOf(500, 400, 300), cpIndex = 2, saved = 0))
+        advance(10_000)
+
+        assertEquals(3, swipesRight) // 1 initial + 2 retries
+        assertEquals(BoxReverseAutoScan.StopReason.SWIPE_FAILED, stoppedReason)
+        assertFalse(cleared)
+        assertNotNull(savedCheckpoint)
+        assertEquals(1, savedCheckpoint!!.cpIndex)
+        assertEquals(1, savedCheckpoint!!.saved)
+        assertEquals(false, doneResult?.second)
+    }
 }
