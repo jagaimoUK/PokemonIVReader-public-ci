@@ -452,10 +452,8 @@ class ScreenCaptureService : Service() {
         }
         val quickMenu = ReaderQuickMenuPopup(
             this,
-            autoRead = { startAutomaticReading() },
-            resumeAutoRead = { startAutomaticReading(resume = true) },
-            automation = { startAutomaticReading(automation = true) },
-            resumeAutomation = { startAutomaticReading(automation = true, resume = true) },
+            autoRead = { startAutomaticReading(automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this)) },
+            resumeAutoRead = { startAutomaticReading(automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this), resume = true) },
             setCatchEnabled = ::setCatchTrialEnabled,
             teachCatchSample = ::teachCatchSample,
             liveThrow = {

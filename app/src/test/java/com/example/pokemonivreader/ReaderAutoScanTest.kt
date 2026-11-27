@@ -118,15 +118,21 @@ class ReaderAutoScanTest {
         assertEquals(1, fake.ids.size)
     }
 
-    @Test fun unreadableCpIsRetriedOnceThenMovesOnlyAfterTagAndAppraisalAreVerified() {
+    @Test fun unreadableCpWaitsUpTo30SecondsBeforeTaggingAndMoving() {
         val fake=Fake().apply { completeHold=false }
         val reader=start(fake)
         fake.finish(OverlayIvProcessor.Phase.REVIEW)
-        advance(500)
+        advance(850)
         assertEquals(2,fake.ids.size)
         assertEquals(1,fake.ids.distinct().size)
         assertEquals(0,fake.holds)
 
+        // Still within 30s wait: keep waiting rather than tagging pending.
+        fake.finish(OverlayIvProcessor.Phase.REVIEW)
+        assertEquals(0,fake.holds)
+
+        // Advance past 30s timeout and trigger one more cpMissing outcome.
+        advance(30_000)
         fake.finish(OverlayIvProcessor.Phase.REVIEW)
         assertEquals(1,fake.holds)
         assertNull(fake.heldCp)
@@ -147,7 +153,7 @@ class ReaderAutoScanTest {
 
         fake.signature=signature(0xffffffff.toInt())
         advance(1400)
-        assertEquals(3,fake.ids.size)
+        assertEquals(4,fake.ids.size)
         assertNotEquals(fake.ids.first(),fake.ids.last())
         reader.cancel()
     }
@@ -155,7 +161,9 @@ class ReaderAutoScanTest {
     @Test fun recoveredCpOnRetrySavesWithoutTagging() {
         val fake=Fake();val reader=start(fake)
         fake.finish(OverlayIvProcessor.Phase.REVIEW)
-        advance(500)
+        advance(900)
+        fake.finish(OverlayIvProcessor.Phase.REVIEW)
+        advance(20_000)
         fake.finish(OverlayIvProcessor.Phase.SAVED)
         assertEquals(0,fake.holds)
         assertEquals(1,fake.swipes)
@@ -167,7 +175,7 @@ class ReaderAutoScanTest {
         val fake=Fake().apply { holdOk=false }
         start(fake)
         fake.finish(OverlayIvProcessor.Phase.REVIEW)
-        advance(500)
+        advance(30_100)
         fake.finish(OverlayIvProcessor.Phase.REVIEW)
         assertEquals(listOf(ReaderAutoScan.HoldState.CP_MISSING, ReaderAutoScan.HoldState.TAGGING,
             ReaderAutoScan.HoldState.TAG_FAILED),fake.holdStates)
@@ -218,10 +226,10 @@ class ReaderAutoScanTest {
     }
     @Test fun stopDuringHoldSuppressesLateCallbackAndChangedReturnNeverSwipes() {
         val fake=Fake();fake.completeHold=false;val reader=start(fake)
-        repeat(2) { fake.finish(OverlayIvProcessor.Phase.REVIEW); if (it == 0) advance(1800) }
+        fake.finish(OverlayIvProcessor.Phase.REVIEW); advance(30_100); fake.finish(OverlayIvProcessor.Phase.REVIEW)
         reader.cancel();fake.finishHold(true);advance(1200);assertEquals(0,fake.swipes)
         val other=Fake();other.completeHold=false;start(other)
-        repeat(2) { other.finish(OverlayIvProcessor.Phase.REVIEW); if (it == 0) advance(1800) }
+        other.finish(OverlayIvProcessor.Phase.REVIEW); advance(30_100); other.finish(OverlayIvProcessor.Phase.REVIEW)
         other.signature=signature(0xffffffff.toInt());other.finishHold(true);advance(1500)
         assertEquals(0,other.swipes);assertEquals(ReaderAutoScan.StopReason.SCREEN_CHANGED,other.stopEvents.single().second)
     }

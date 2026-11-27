@@ -32,13 +32,17 @@ internal class ReaderQuickMenuPopup(
     private val context: Context,
     private val autoRead: (() -> Unit)? = null,
     private val resumeAutoRead: (() -> Unit)? = null,
-    private val automation: (() -> Unit)? = null,
-    private val resumeAutomation: (() -> Unit)? = null,
     private val setCatchEnabled: ((Boolean) -> Unit)? = null,
     private val teachCatchSample: (() -> Unit)? = null,
     private val liveThrow: (() -> Pair<String, () -> Unit>)? = null,
     private val learnButtons: ((View) -> Unit)? = null,
 ) {
+    companion object {
+        const val AUTO_SELECTION_KEY = "auto_scan_with_selection"
+        fun isAutoSelectionEnabled(context: Context): Boolean =
+            context.getSharedPreferences("pokemon_iv_reader", Context.MODE_PRIVATE)
+                .getBoolean(AUTO_SELECTION_KEY, false)
+    }
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val cleanup = ReaderCleanupStore(context)
     private var content: View? = null
@@ -173,23 +177,53 @@ internal class ReaderQuickMenuPopup(
                 LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
         }
 
+        if (autoRead != null || resumeAutoRead != null) {
+            val autoSelRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+            var autoSel = isAutoSelectionEnabled(context)
+            lateinit var readOnlyBtn: TextView
+            lateinit var withSelectionBtn: TextView
+            fun refreshAutoSelButtons() {
+                readOnlyBtn.text = (if (!autoSel) "✓ " else "") + "読取のみ"
+                withSelectionBtn.text = (if (autoSel) "✓ " else "") + "読取＋厳選"
+                readOnlyBtn.background = capsule(if (!autoSel) Color.rgb(88, 128, 108) else Color.rgb(73, 99, 86))
+                withSelectionBtn.background = capsule(if (autoSel) Color.rgb(88, 128, 108) else Color.rgb(73, 99, 86))
+            }
+            fun setAutoSelection(enabled: Boolean) {
+                if (!prefs.edit().putBoolean(AUTO_SELECTION_KEY, enabled).commit()) {
+                    toast("設定を保存できませんでした")
+                    return
+                }
+                autoSel = enabled
+                refreshAutoSelButtons()
+            }
+            readOnlyBtn = textButton("読取のみ") { setAutoSelection(false) }.apply {
+                contentDescription = "読取のみに設定"
+            }
+            withSelectionBtn = textButton("読取＋厳選") { setAutoSelection(true) }.apply {
+                contentDescription = "読取＋厳選に設定"
+            }
+            refreshAutoSelButtons()
+            autoSelRow.addView(readOnlyBtn, LinearLayout.LayoutParams(0, dp(44), 1f))
+            autoSelRow.addView(withSelectionBtn, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(6) })
+            root.addView(autoSelRow, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(7) })
+        }
+
         if (autoRead != null) root.addView(textButton("自動読み取りを開始 ←") {
             dismiss(); autoRead.invoke()
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
 
         if (resumeAutoRead != null) root.addView(textButton("自動読み取りを再開 ←") {
-            dismiss(); resumeAutoRead.invoke()
-        }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
-        if(automation!=null)root.addView(textButton("おまかせ読取・厳選を開始") {
-            dismiss();automation.invoke()
-        },LinearLayout.LayoutParams(-1,dp(48)).apply{topMargin=dp(7)})
-        if(resumeAutomation!=null)root.addView(textButton("おまかせ読取・厳選を再開") {
             dismiss()
-            val state=com.example.pokemonivreader.ReaderAutomationStore(context)
-            if(state.state=="ready")OverlayCopyQueueController.get(context).startAutomationBatch()
-            else if(state.pending()!=null)com.example.pokemonivreader.ReaderWebTransfer.automate(context,true)
-            else resumeAutomation.invoke()
-        },LinearLayout.LayoutParams(-1,dp(48)).apply{topMargin=dp(7)})
+            if (isAutoSelectionEnabled(context)) {
+                val state = com.example.pokemonivreader.ReaderAutomationStore(context)
+                if (state.state == "ready") OverlayCopyQueueController.get(context).startAutomationBatch()
+                else if (state.pending() != null) com.example.pokemonivreader.ReaderWebTransfer.automate(context, true)
+                else resumeAutoRead.invoke()
+            } else {
+                resumeAutoRead.invoke()
+            }
+        }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(7) })
+
         if (learnButtons != null) root.addView(textButton("ボタンを学習") {
             dismiss()
             learnButtons.invoke(anchor)
@@ -229,7 +263,7 @@ internal class ReaderQuickMenuPopup(
         val screenWidth = context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
         val width = dp(224).coerceAtMost(screenWidth)
-        val approxHeight = dp((if (automation != null) 550 else if (autoRead != null) 435 else 340) +
+        val approxHeight = dp((if (autoRead != null || resumeAutoRead != null) 490 else 340) +
             (if (setCatchEnabled != null) 55 else 0) + (if (teachCatchSample != null) 55 else 0) + (if (liveThrow != null) 55 else 0) +
             (if (learnButtons != null) 55 else 0))
         val x = (location[0] + anchor.width - width).coerceIn(0, (screenWidth - width).coerceAtLeast(0))

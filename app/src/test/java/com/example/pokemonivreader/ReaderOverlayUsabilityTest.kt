@@ -118,5 +118,45 @@ class ReaderOverlayUsabilityTest {
             popup.destroy()
         }
     }
+
+    @Test fun quickMenuMergesAutoReadWithPersistentAutoSelectionToggle() {
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true)
+        val anchor = TextView(activity)
+        activity.setContentView(anchor)
+        var startedWithSelection: Boolean? = null
+        val popup = com.example.pokemonivreader.readerquickmenu.ReaderQuickMenuPopup(
+            activity,
+            autoRead = { startedWithSelection = com.example.pokemonivreader.readerquickmenu.ReaderQuickMenuPopup.isAutoSelectionEnabled(activity) },
+            resumeAutoRead = {},
+        )
+        try {
+            assertFalse(com.example.pokemonivreader.readerquickmenu.ReaderQuickMenuPopup.isAutoSelectionEnabled(activity))
+            popup.toggle(anchor)
+            assertTrue(popup.isShowing)
+            val contentField = popup.javaClass.getDeclaredField("content").apply { isAccessible = true }
+            val menuView = contentField.get(popup) as android.view.ViewGroup
+            fun findTextViews(v: android.view.View): List<TextView> =
+                (if (v is TextView) listOf(v) else emptyList()) +
+                    if (v is android.view.ViewGroup) (0 until v.childCount).flatMap { findTextViews(v.getChildAt(it)) } else emptyList()
+
+            val texts = findTextViews(menuView).map { it.text.toString() }
+            assertFalse(texts.any { it.contains("おまかせ読取") })
+            assertTrue(texts.contains("✓ 読取のみ"))
+            assertTrue(texts.contains("読取＋厳選"))
+
+            val withSelBtn = findTextViews(menuView).single { it.text.toString() == "読取＋厳選" }
+            withSelBtn.performClick()
+            assertTrue(popup.isShowing)
+            assertTrue(com.example.pokemonivreader.readerquickmenu.ReaderQuickMenuPopup.isAutoSelectionEnabled(activity))
+            assertEquals("✓ 読取＋厳選", withSelBtn.text.toString())
+
+            val startBtn = findTextViews(menuView).single { it.text.toString() == "自動読み取りを開始 ←" }
+            startBtn.performClick()
+            assertFalse(popup.isShowing)
+            assertEquals(true, startedWithSelection)
+        } finally {
+            popup.destroy()
+        }
+    }
 }
 
