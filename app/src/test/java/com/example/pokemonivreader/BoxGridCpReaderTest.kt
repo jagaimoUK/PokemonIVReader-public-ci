@@ -60,4 +60,52 @@ class BoxGridCpReaderTest {
         assertEquals(450f, tap.first, 1f)
         assertTrue(tap.second > 300f + 220f)
     }
+
+    @Test fun extractElementsFromLinesPairsSplitCpAndDigitsWithoutPickingNicknames() {
+        val lines = listOf(
+            BoxGridCpReader.RecognizedLine("CP", 40, 20, 90, 50),
+            BoxGridCpReader.RecognizedLine("1497", 95, 18, 210, 56),
+            BoxGridCpReader.RecognizedLine("CP 593", 380, 20, 500, 56),
+            BoxGridCpReader.RecognizedLine("2026", 50, 250, 180, 290), // nickname without CP label
+        )
+        val elements = BoxGridCpReader.extractElementsFromLines(lines, gridWidth = 900, gridHeight = 1000)
+        val cps = elements.map { it.cp }.sortedDescending()
+        assertEquals(listOf(1497, 593), cps)
+    }
+
+    @Test fun collectorBackfillsMissingColumnAndRecoversFromClippedTopRow() {
+        val page1 = listOf(
+            BoxGridCpReader.BoxRow(listOf(1497, 593, 563), 100),
+            BoxGridCpReader.BoxRow(listOf(559, 554, 533), 300),
+            // Clipped bottom edge misses center column
+            BoxGridCpReader.BoxRow(listOf(522, null, 500), 500),
+        )
+        val page2 = listOf(
+            BoxGridCpReader.BoxRow(listOf(559, 554, 533), 100),
+            // Same row now fully visible
+            BoxGridCpReader.BoxRow(listOf(522, 521, 500), 300),
+            BoxGridCpReader.BoxRow(listOf(490, 480, 470), 500),
+        )
+        val page3 = listOf(
+            // Clipped top edge misreads one col of earlier row, followed by 2 exact overlapping rows
+            BoxGridCpReader.BoxRow(listOf(null, 55, null), 20),
+            BoxGridCpReader.BoxRow(listOf(522, 521, 500), 220),
+            BoxGridCpReader.BoxRow(listOf(490, 480, 470), 420),
+            BoxGridCpReader.BoxRow(listOf(460, null, null), 620),
+        )
+
+        val collector = BoxGridCpReader.Collector()
+        assertEquals(3, collector.appendPage(page1))
+        assertEquals(1, collector.appendPage(page2))
+        assertEquals(1, collector.appendPage(page3))
+
+        assertEquals(
+            listOf(1497, 593, 563, 559, 554, 533, 522, 521, 500, 490, 480, 470, 460),
+            collector.flattenedCps()
+        )
+        val history = collector.formatPageHistory()
+        assertTrue(history.contains("Page 1"))
+        assertTrue(history.contains("重複2行"))
+        assertTrue(history.contains("上端見切れ1行スキップ"))
+    }
 }

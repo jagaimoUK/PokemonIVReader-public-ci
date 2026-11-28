@@ -1122,9 +1122,12 @@ class ScreenCaptureService : Service() {
         dialog.show()
     }
 
-    private fun startBoxReverseReading() = startBoxReverseReading(null)
+    private fun startBoxReverseReading() = startBoxReverseReading(null, appendToSession = false)
 
-    private fun startBoxReverseReading(resumeState: BoxReverseAutoScan.ResumeState?) {
+    private fun startBoxReverseReading(
+        resumeState: BoxReverseAutoScan.ResumeState?,
+        appendToSession: Boolean = false,
+    ) {
         resumePopup?.dismiss()
         if (GoTextInputAccessibilityService.isCatchTrialRunning()) {
             Toast.makeText(this, "捕獲をオフにしてから読み取ってください", Toast.LENGTH_SHORT).show()
@@ -1154,7 +1157,7 @@ class ScreenCaptureService : Service() {
         }
         val automation = ReaderQuickMenuPopup.isAutoSelectionEnabled(this)
         val session = ReaderAutomationStore(this)
-        if (automation && resumeState == null) session.beginReading()
+        if (automation && resumeState == null && !appendToSession) session.beginReading()
         val boxCheckpoint = BoxReverseCheckpoint(this)
         readerControl = control
         autoReading = true; automaticFrame = null
@@ -1192,15 +1195,20 @@ class ScreenCaptureService : Service() {
                 boxCheckpoint.clear()
             }
             override fun hint(message: String) { updateNotification(message) }
-            private var lastStage: BoxReverseAutoScan.Stage? = null
-            private var lastReason: BoxReverseAutoScan.StopReason? = null
-            private var lastSaved = 0
-            private var lastCollected = 0
+            var lastStage: BoxReverseAutoScan.Stage? = null
+            var lastReason: BoxReverseAutoScan.StopReason? = null
+            var lastSaved = 0
+            var lastCollected = 0
+            var lastSummary: BoxReverseAutoScan.ScanSummary? = null
             override fun stopped(stage: BoxReverseAutoScan.Stage, reason: BoxReverseAutoScan.StopReason, saved: Int, collectedCps: Int) {
                 lastStage = stage
                 lastReason = reason
                 lastSaved = saved
                 lastCollected = collectedCps
+            }
+            override fun finished(summary: BoxReverseAutoScan.ScanSummary) {
+                lastSummary = summary
+                boxCheckpoint.saveLastScanReport(summary.verificationReport)
             }
             fun formatStopLog(message: String, savedBox: BoxReverseCheckpoint.State?): String {
                 val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", java.util.Locale.US)
@@ -1224,15 +1232,39 @@ class ScreenCaptureService : Service() {
                         ReaderWebTransfer.automate(this)
                     }
                 }
-                if (!completed) {
+                val summary = port.lastSummary
+                val cpReport = summary?.verificationReport ?: boxCheckpoint.loadLastScanReport()
+                val popup = resumePopup ?: ReaderResumePopup(this).also { resumePopup = it }
+                if (completed) {
+                    val isUnbounded = resumeState?.unboundedReverse == true
+                    popup.showBoxCompleted(
+                        savedCount = summary?.savedCount ?: port.lastSaved,
+                        collectedCount = summary?.collectedCount ?: port.lastCollected,
+                        reasonDetail = summary?.reasonDetail ?: message,
+                        cpReport = cpReport,
+                        showContinueButton = !isUnbounded,
+                        onContinueRemaining = {
+                            startBoxReverseReading(
+                                BoxReverseAutoScan.ResumeState(
+                                    collectedCps = emptyList(),
+                                    cpIndex = -1,
+                                    saved = summary?.savedCount ?: port.lastSaved,
+                                    lastTapPoint = null,
+                                    unboundedReverse = true,
+                                ),
+                                appendToSession = true,
+                            )
+                        }
+                    )
+                } else {
                     val savedBox = boxCheckpoint.load()
                     val stopLog = port.formatStopLog(message, savedBox)
-                    val popup = resumePopup ?: ReaderResumePopup(this).also { resumePopup = it }
                     if (savedBox != null) {
                         popup.showBoxResume(
                             state = savedBox,
                             stopReasonText = message,
                             stopLog = stopLog,
+                            cpReport = cpReport,
                             onResume = { resumeTarget -> startBoxReverseReading(resumeTarget.toResumeState()) },
                             onSkip = {
                                 val current = boxCheckpoint.load() ?: return@showBoxResume null
@@ -1247,7 +1279,7 @@ class ScreenCaptureService : Service() {
                             }
                         )
                     } else {
-                        popup.showStopLogOnly("ボックス読取 停止", message, stopLog)
+                        popup.showStopLogOnly("ボックス読取 停止", message, stopLog, cpReport = cpReport)
                     }
                 }
         }.also { it.start(resumeState) }

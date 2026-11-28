@@ -8,7 +8,7 @@ import android.widget.TextView
 
 /** One immutable report for display/copy. Copying remains an explicit local action. */
 internal object DiagnosticLogDialog {
-    fun show(context:Context,title:String,report:String,export:()->Unit):AlertDialog {
+    fun show(context:Context,title:String,report:String,export:(()->Unit)? = null):AlertDialog {
         val padding=(16*context.resources.displayMetrics.density).toInt()
         val text=TextView(context).apply {
             this.text=report
@@ -18,14 +18,16 @@ internal object DiagnosticLogDialog {
             contentDescription="ログ本文。長押しで範囲を選択してコピーできます"
         }
         val scroll=ScrollView(context).apply { addView(text) }
-        val dialog=AlertDialog.Builder(context).setTitle(title)
+        val builder=AlertDialog.Builder(context).setTitle(title)
             .setView(scroll).setPositiveButton("閉じる",null)
             .setNegativeButton("全体をコピー",null)
-            .setNeutralButton("ログを出力"){_,_->export()}.create()
+        if (export != null) builder.setNeutralButton("ログを出力"){_,_->export()}
+        val dialog=builder.create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
             ClipboardCopy.write(context,title,report)
+            android.widget.Toast.makeText(context,"${title}をコピーしました",android.widget.Toast.LENGTH_SHORT).show()
         }
         return dialog
     }

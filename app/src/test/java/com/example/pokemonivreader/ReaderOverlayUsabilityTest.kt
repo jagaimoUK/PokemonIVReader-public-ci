@@ -158,5 +158,40 @@ class ReaderOverlayUsabilityTest {
             popup.destroy()
         }
     }
+
+    @Test fun quickMenuOpensLatestBoxCpReportAndCompletionPopupCopiesCpList() {
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true)
+        val cpReport = "=== ボックスCP読み取り検証リスト ===\n1: CP1500\n2: CP1400"
+        BoxReverseCheckpoint(activity).saveLastScanReport(cpReport)
+
+        val clipboard = activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val popup = ReaderResumePopup(activity)
+        var continued = false
+        try {
+            popup.showBoxCompleted(
+                savedCount = 2,
+                collectedCount = 2,
+                reasonDetail = "収集したCP 2件の先頭（1/2）まで読み取りを完了しました。",
+                cpReport = cpReport,
+                onContinueRemaining = { continued = true },
+            )
+            assertTrue(popup.isShowing)
+            val rootField = popup.javaClass.getDeclaredField("root").apply { isAccessible = true }
+            val rootView = rootField.get(popup) as android.view.ViewGroup
+            fun findTextViews(v: android.view.View): List<TextView> =
+                (if (v is TextView) listOf(v) else emptyList()) +
+                    if (v is android.view.ViewGroup) (0 until v.childCount).flatMap { findTextViews(v.getChildAt(it)) } else emptyList()
+            val copyBtn = findTextViews(rootView).single { it.text.toString() == "CPリストコピー" }
+            copyBtn.performClick()
+            assertEquals(cpReport, clipboard.primaryClip!!.getItemAt(0).text.toString())
+
+            val continueBtn = findTextViews(rootView).single { it.text.toString().startsWith("残りを先頭まで続ける") }
+            continueBtn.performClick()
+            assertTrue(continued)
+            assertFalse(popup.isShowing)
+        } finally {
+            popup.dismiss()
+        }
+    }
 }
 

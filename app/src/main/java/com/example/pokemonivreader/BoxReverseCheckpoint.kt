@@ -69,7 +69,14 @@ internal class BoxReverseCheckpoint(context: Context) {
 
     fun clear(): Boolean = prefs.edit().remove(KEY).commit()
 
+    fun saveLastScanReport(report: String): Boolean =
+        prefs.edit().putString(LAST_REPORT_KEY, report.take(150_000)).commit()
+
+    fun loadLastScanReport(): String? =
+        prefs.getString(LAST_REPORT_KEY, null)?.takeIf { it.isNotBlank() }
+
     companion object {
         private const val KEY = "box_reverse_checkpoint_v1"
+        private const val LAST_REPORT_KEY = "box_reverse_last_report_v1"
     }
 }
