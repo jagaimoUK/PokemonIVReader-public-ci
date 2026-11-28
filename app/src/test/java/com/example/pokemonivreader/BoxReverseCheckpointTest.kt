@@ -52,10 +52,12 @@ class BoxReverseCheckpointTest {
         assertNull(skipped.skipped())
     }
 
-    @Test fun clearRemovesSavedState() {
+    @Test fun clearRemovesSavedStateButKeepsLastScanReport() {
         checkpoint.save(BoxReverseCheckpoint.State(listOf(500, 400), 1, 0))
+        checkpoint.saveLastScanReport("=== CP LIST ===\n500, 400")
         assertNotNull(checkpoint.load())
         assertTrue(checkpoint.clear())
         assertNull(checkpoint.load())
+        assertEquals("=== CP LIST ===\n500, 400", checkpoint.loadLastScanReport())
     }
 }

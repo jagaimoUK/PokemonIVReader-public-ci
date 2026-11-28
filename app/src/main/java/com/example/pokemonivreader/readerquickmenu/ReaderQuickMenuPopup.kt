@@ -291,6 +291,16 @@ internal class ReaderQuickMenuPopup(
             }
         },LinearLayout.LayoutParams(-1,dp(44)).apply{topMargin=dp(7)})
 
+        root.addView(textButton("最新のボックスCPリスト") {
+            dismiss()
+            val report = com.example.pokemonivreader.BoxReverseCheckpoint(context).loadLastScanReport()
+            if (report == null) {
+                toast("まだボックスCP読み取りの履歴がありません")
+            } else {
+                com.example.pokemonivreader.DiagnosticLogDialog.show(context, "ボックスCP読み取りリスト", report)
+            }
+        }, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(7) })
+
         root.addView(textButton("読み取り履歴を削除・復元") {
             dismiss()
             com.example.pokemonivreader.ReaderHistoryDialog.show(context)

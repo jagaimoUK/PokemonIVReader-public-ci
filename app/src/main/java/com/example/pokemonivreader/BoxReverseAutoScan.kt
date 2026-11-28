@@ -22,6 +22,19 @@ internal class BoxReverseAutoScan(
         val cpIndex: Int,
         val saved: Int,
         val lastTapPoint: Pair<Float, Float>? = null,
+        val unboundedReverse: Boolean = false,
+    )
+
+    data class ScanSummary(
+        val completed: Boolean,
+        val reason: StopReason,
+        val stage: Stage,
+        val reasonDetail: String,
+        val savedCount: Int,
+        val collectedCount: Int,
+        val pagesScanned: Int,
+        val scrollAttempts: Int,
+        val verificationReport: String,
     )
 
     enum class StopReason {
@@ -48,6 +61,7 @@ internal class BoxReverseAutoScan(
         fun clearCheckpoint() {}
         fun hint(message: String)
         fun stopped(stage: Stage, reason: StopReason, saved: Int, collectedCps: Int) {}
+        fun finished(summary: ScanSummary) {}
     }
 
     private var stage = Stage.SCAN_BOX
@@ -55,6 +69,7 @@ internal class BoxReverseAutoScan(
     private var lastTapPoint: Pair<Float, Float>? = null
     private var collectedCps: List<Int?> = emptyList()
     private var cpIndex = -1
+    private var unboundedReverse = false
 
     private var recordId = java.util.UUID.randomUUID().toString()
     private var saved = 0
@@ -63,6 +78,10 @@ internal class BoxReverseAutoScan(
     private var detailRetries = 0
     private var appraisalOpens = 0
     private var swipeRetries = 0
+    private var pagesScanned = 0
+    private var scrollAttempts = 0
+    private var bottomConfirmRetries = 0
+    private val captureHistory = mutableListOf<String>()
 
     private var scrollBaseline: ReaderAutoScan.Frame? = null
     private var detailBaseline: ReaderAutoScan.Frame? = null
@@ -79,12 +98,46 @@ internal class BoxReverseAutoScan(
     private fun now() = SystemClock.elapsedRealtime()
 
     fun start(resumeState: ResumeState? = null) {
+        if (resumeState != null && resumeState.unboundedReverse) {
+            collectedCps = resumeState.collectedCps
+            cpIndex = -1
+            saved = resumeState.saved
+            lastTapPoint = resumeState.lastTapPoint
+            unboundedReverse = true
+            val current = port.frame()
+            if (current == null) {
+                stop("現在の画面を確認できないため続行できません。評価画面を開いて再試行してください", StopReason.FRAME_UNAVAILABLE)
+                return
+            }
+            detailBaseline = current
+            swipeRetries = 0
+            detailRetries = 0
+            stage = Stage.SWIPE_PREV
+            busy = true
+            port.hint("未読の残り個体を先頭まで続行中（保存済み ${saved}体）…")
+            port.swipeRight { ok ->
+                if (stage != Stage.SWIPE_PREV) return@swipeRight
+                busy = false
+                if (!ok) {
+                    stop("右スワイプを実行できませんでした", StopReason.SWIPE_FAILED)
+                    return@swipeRight
+                }
+                actionAt = now()
+                unchangedAt = 0L
+                candidate = null
+                stage = Stage.WAIT_PREV
+                schedule(400L)
+            }
+            if (busy) schedule()
+            return
+        }
         if (resumeState != null && resumeState.collectedCps.isNotEmpty() &&
             resumeState.cpIndex in resumeState.collectedCps.indices) {
             collectedCps = resumeState.collectedCps
             cpIndex = resumeState.cpIndex
             saved = resumeState.saved
             lastTapPoint = resumeState.lastTapPoint
+            unboundedReverse = false
             detailWaitSince = now()
             appraisalOpens = 0
             detailRetries = 0
@@ -110,14 +163,80 @@ internal class BoxReverseAutoScan(
         if (stage != Stage.STOPPED) handler.postDelayed(tick, ms)
     }
 
+    private fun buildReasonDetail(message: String, reason: StopReason): String {
+        if (reason != StopReason.COMPLETED) return message
+        if (unboundedReverse) {
+            return "右スワイプで先頭付近まで読み取りを完了しました（累計保存 ${saved}体）"
+        }
+        val suspiciousSinglePage = pagesScanned <= 1 && scrollAttempts >= 1
+        val warning = if (suspiciousSinglePage) {
+            "\n※1ページ分（${collectedCps.size}件）のみで最下部判定されたため、途中で終わった可能性があります。"
+        } else ""
+        return "収集したCP ${collectedCps.size}件の先頭（1/${collectedCps.size}）まで読み取りを完了しました。" +
+            "（${pagesScanned}ページ・スクロール${scrollAttempts}回確認）$warning"
+    }
+
+    private fun buildVerificationReport(reasonDetail: String, reason: StopReason): String = buildString {
+        val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", java.util.Locale.US)
+            .format(java.util.Date())
+        appendLine("=== ボックスCP読み取り検証リスト ===")
+        appendLine("時刻: $ts")
+        appendLine("結果: ${reason.name} / $reasonDetail")
+        appendLine("保存数: $saved 体 / 収集CP数: ${collectedCps.size} 件 / 読取ページ: $pagesScanned / スクロール: $scrollAttempts 回")
+        appendLine("残インデックス: ${if (cpIndex >= 0) "${cpIndex + 1}体残" else "0体残"}")
+        appendLine()
+        appendLine("[収集CPリスト（上から順 / 計${collectedCps.size}件）]")
+        if (collectedCps.isEmpty()) {
+            appendLine("（なし）")
+        } else {
+            collectedCps.forEachIndexed { idx, cp ->
+                appendLine("${idx + 1}: ${cp?.let { "CP$it" } ?: "CP不明(null)"}")
+            }
+        }
+        appendLine()
+        appendLine("[カンマ区切り（数値のみ）]")
+        appendLine(collectedCps.joinToString(", ") { it?.toString() ?: "?" }.ifBlank { "（なし）" })
+        appendLine()
+        appendLine("[ページ別スキャン履歴]")
+        appendLine(collector.formatPageHistory())
+        appendLine()
+        appendLine("[逆順評価読取の割当履歴（下→上）]")
+        if (captureHistory.isEmpty()) {
+            appendLine("（なし）")
+        } else {
+            captureHistory.forEach { appendLine(it) }
+        }
+    }.trimEnd()
+
     private fun stop(message: String, reason: StopReason) {
         if (stage == Stage.STOPPED) return
+        val stoppedAtStage = stage
         if (reason == StopReason.COMPLETED) {
             runCatching { port.clearCheckpoint() }
-        } else if (collectedCps.isNotEmpty() && cpIndex in collectedCps.indices) {
+        } else if (!unboundedReverse && collectedCps.isNotEmpty() && cpIndex in collectedCps.indices) {
             runCatching { port.saveCheckpoint(ResumeState(collectedCps, cpIndex, saved, lastTapPoint)) }
         }
-        runCatching { port.stopped(stage, reason, saved, collectedCps.size) }
+        if (collectedCps.isEmpty() && collector.rowCount() > 0) {
+            collectedCps = collector.flattenedCps()
+        }
+        val reasonDetail = buildReasonDetail(message, reason)
+        val report = buildVerificationReport(reasonDetail, reason)
+        runCatching { port.stopped(stoppedAtStage, reason, saved, collectedCps.size) }
+        runCatching {
+            port.finished(
+                ScanSummary(
+                    completed = reason == StopReason.COMPLETED,
+                    reason = reason,
+                    stage = stoppedAtStage,
+                    reasonDetail = reasonDetail,
+                    savedCount = saved,
+                    collectedCount = collectedCps.size,
+                    pagesScanned = pagesScanned,
+                    scrollAttempts = scrollAttempts,
+                    verificationReport = report,
+                )
+            )
+        }
         stage = Stage.STOPPED
         handler.removeCallbacks(tick)
         handler.removeCallbacks(captureTimeout)
@@ -171,27 +290,14 @@ internal class BoxReverseAutoScan(
                         return@readBoxPage
                     }
                     boxReadRetries = 0
+                    pagesScanned++
                     collector.appendPage(page.rows)
                     if (page.lastTapPoint != null) {
                         lastTapPoint = page.lastTapPoint
                     }
                     scrollBaseline = frame
                     port.hint("ボックスCP収集中（${collector.flattenedCps().size}件）")
-                    busy = true
-                    port.scrollBoxDown { ok ->
-                        if (stage == Stage.STOPPED) return@scrollBoxDown
-                        busy = false
-                        if (!ok) {
-                            stop("ボックスのスクロールに失敗しました", StopReason.SCROLL_FAILED)
-                            return@scrollBoxDown
-                        }
-                        actionAt = now()
-                        unchangedAt = 0L
-                        candidate = null
-                        stage = Stage.WAIT_SCROLL
-                        schedule(450L)
-                    }
-                    if (busy) schedule()
+                    performBoxScrollDown()
                 }
                 if (busy) schedule()
             }
@@ -208,6 +314,7 @@ internal class BoxReverseAutoScan(
                     return
                 }
                 if (!before.signature.same(frame.signature)) {
+                    bottomConfirmRetries = 0
                     unchangedAt = 0L
                     val prev = candidate
                     if (prev != null && prev.signature.same(frame.signature) && frame.at - prev.at >= 350L) {
@@ -221,8 +328,14 @@ internal class BoxReverseAutoScan(
                 } else {
                     candidate = null
                     if (unchangedAt == 0L) unchangedAt = frame.at
-                    if (frame.at - unchangedAt >= 1100L && now() - actionAt >= 1400L) {
-                        beginReverseFromBottom()
+                    if (frame.at - unchangedAt >= 1000L && now() - actionAt >= 1300L) {
+                        if (bottomConfirmRetries < 1) {
+                            bottomConfirmRetries++
+                            port.hint("最下部を確認中…（再スクロール）")
+                            performBoxScrollDown()
+                        } else {
+                            beginReverseFromBottom()
+                        }
                     } else {
                         schedule()
                     }
@@ -307,7 +420,7 @@ internal class BoxReverseAutoScan(
                     candidate = null
                     if (unchangedAt == 0L) unchangedAt = frame.at
                     if (frame.at - unchangedAt >= 1400L && now() - actionAt >= 1800L) {
-                        if (cpIndex < 0) {
+                        if (!unboundedReverse && cpIndex < 0) {
                             stop("先頭まで逆順読み取りを完了しました", StopReason.COMPLETED)
                         } else if (swipeRetries < MAX_SWIPE_RETRIES) {
                             swipeRetries++
@@ -328,6 +441,8 @@ internal class BoxReverseAutoScan(
                                 schedule(400L)
                             }
                             if (busy) schedule()
+                        } else if (unboundedReverse) {
+                            stop("先頭まで逆順読み取りを完了しました", StopReason.COMPLETED)
                         } else {
                             stop("右スワイプ後の移動を確認できません（残 ${cpIndex + 1}体）", StopReason.SWIPE_FAILED)
                         }
@@ -338,6 +453,25 @@ internal class BoxReverseAutoScan(
             }
             Stage.STOPPED -> Unit
         }
+    }
+
+    private fun performBoxScrollDown() {
+        scrollAttempts++
+        busy = true
+        port.scrollBoxDown { ok ->
+            if (stage == Stage.STOPPED) return@scrollBoxDown
+            busy = false
+            if (!ok) {
+                stop("ボックスのスクロールに失敗しました", StopReason.SCROLL_FAILED)
+                return@scrollBoxDown
+            }
+            actionAt = now()
+            unchangedAt = 0L
+            candidate = null
+            stage = Stage.WAIT_SCROLL
+            schedule(450L)
+        }
+        if (busy) schedule()
     }
 
     private fun beginReverseFromBottom() {
@@ -370,10 +504,12 @@ internal class BoxReverseAutoScan(
 
     private fun captureCurrentDetail(current: ReaderAutoScan.Frame) {
         stage = Stage.CAPTURE_DETAIL
-        val expectedCp = collectedCps.getOrNull(cpIndex)
-        val ordinal = collectedCps.size - cpIndex
-        port.hint("逆順読取 $ordinal/${collectedCps.size}体目" +
-            (expectedCp?.let { " (CP$it)" } ?: ""))
+        val expectedCp = if (unboundedReverse) null else collectedCps.getOrNull(cpIndex)
+        val ordinal = if (unboundedReverse) saved + 1 else collectedCps.size - cpIndex
+        port.hint(
+            if (unboundedReverse) "続きを逆順読取 累計${ordinal}体目"
+            else "逆順読取 $ordinal/${collectedCps.size}体目" + (expectedCp?.let { " (CP$it)" } ?: "")
+        )
         busy = true
         handler.postDelayed(captureTimeout, 30_000L)
         port.capture(recordId, expectedCp) { outcome ->
@@ -393,17 +529,27 @@ internal class BoxReverseAutoScan(
                     schedule(700L)
                     return@capture
                 }
+                captureHistory.add(
+                    "#${captureHistory.size + 1} (idx=${if (unboundedReverse) "OCR" else cpIndex.toString()}): " +
+                        "割当=${expectedCp?.let { "CP$it" } ?: "OCR"} -> FAILED(${outcome.phase.name})"
+                )
                 stop("評価の解析に失敗したため逆順読み取りを停止しました", StopReason.READ_FAILED)
                 return@capture
             }
+            captureHistory.add(
+                "#${captureHistory.size + 1} (idx=${if (unboundedReverse) "OCR" else cpIndex.toString()}): " +
+                    "割当=${expectedCp?.let { "CP$it" } ?: "OCR"} -> SAVED(結果=${outcome.displayCp?.let { "CP$it" } ?: "未認識"})"
+            )
             saved++
             port.saved(recordId)
-            cpIndex--
-            if (cpIndex < 0) {
-                stop("ボックスCP逆順読み取りを完了しました", StopReason.COMPLETED)
-                return@capture
+            if (!unboundedReverse) {
+                cpIndex--
+                if (cpIndex < 0) {
+                    stop("ボックスCP逆順読み取りを完了しました", StopReason.COMPLETED)
+                    return@capture
+                }
+                runCatching { port.saveCheckpoint(ResumeState(collectedCps, cpIndex, saved, lastTapPoint)) }
             }
-            runCatching { port.saveCheckpoint(ResumeState(collectedCps, cpIndex, saved, lastTapPoint)) }
             detailBaseline = current
             swipeRetries = 0
             stage = Stage.SWIPE_PREV
