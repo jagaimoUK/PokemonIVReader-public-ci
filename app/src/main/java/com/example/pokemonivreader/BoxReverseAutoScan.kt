@@ -81,6 +81,7 @@ internal class BoxReverseAutoScan(
     private var pagesScanned = 0
     private var scrollAttempts = 0
     private var bottomConfirmRetries = 0
+    private var noNewRowsScrolls = 0
     private val captureHistory = mutableListOf<String>()
 
     private var scrollBaseline: ReaderAutoScan.Frame? = null
@@ -291,9 +292,19 @@ internal class BoxReverseAutoScan(
                     }
                     boxReadRetries = 0
                     pagesScanned++
-                    collector.appendPage(page.rows)
+                    val addedRows = collector.appendPage(page.rows)
                     if (page.lastTapPoint != null) {
                         lastTapPoint = page.lastTapPoint
+                    }
+                    if (addedRows > 0) {
+                        noNewRowsScrolls = 0
+                        bottomConfirmRetries = 0
+                    } else {
+                        noNewRowsScrolls++
+                        if (noNewRowsScrolls >= 1) {
+                            beginReverseFromBottom()
+                            return@readBoxPage
+                        }
                     }
                     scrollBaseline = frame
                     port.hint("ボックスCP収集中（${collector.flattenedCps().size}件）")
@@ -314,7 +325,6 @@ internal class BoxReverseAutoScan(
                     return
                 }
                 if (!before.signature.same(frame.signature)) {
-                    bottomConfirmRetries = 0
                     unchangedAt = 0L
                     val prev = candidate
                     if (prev != null && prev.signature.same(frame.signature) && frame.at - prev.at >= 350L) {

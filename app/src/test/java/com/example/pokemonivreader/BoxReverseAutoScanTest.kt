@@ -367,4 +367,112 @@ class BoxReverseAutoScanTest {
         assertTrue(doneResult?.second == true)
         assertTrue(doneResult?.first?.contains("保存 7 体") == true)
     }
+
+    @Test fun doesNotLoopAtBottomWhenScrollCausesTransientFlicker() {
+        val main = Handler(Looper.getMainLooper())
+        var sig = signature(0x11111111)
+        var appraisal = false
+        var scrolls = 0
+        var tapped: Pair<Float, Float>? = null
+        val capturedCps = mutableListOf<Int?>()
+        var doneResult: Pair<String, Boolean>? = null
+
+        val port = object : BoxReverseAutoScan.Port {
+            override fun foreground() = true
+            override fun frame() = ReaderAutoScan.Frame(sig, SystemClock.elapsedRealtime(), appraisal)
+            override fun readBoxPage(result: (BoxReverseAutoScan.BoxPageResult) -> Unit) {
+                result(BoxReverseAutoScan.BoxPageResult(
+                    listOf(BoxGridCpReader.BoxRow(listOf(500, 400, 300), 100)),
+                    750f to 200f
+                ))
+            }
+            override fun scrollBoxDown(result: (Boolean) -> Unit) {
+                scrolls++
+                // Simulate brief overscroll bounce that returns to the exact same frame before 350ms
+                sig = signature(0x55555555)
+                main.postDelayed({ sig = signature(0x11111111) }, 150L)
+                result(true)
+            }
+            override fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit) {
+                tapped = x to y
+                appraisal = true
+                sig = signature(0x22222222)
+                result(true)
+            }
+            override fun openAppraisal(result: (Boolean) -> Unit) = result(true)
+            override fun capture(recordId: String, cpOverride: Int?, result: (OverlayIvProcessor.Outcome) -> Unit) {
+                capturedCps.add(cpOverride)
+                result(OverlayIvProcessor.Outcome("ok", true, "0,15,15", cpOverride, OverlayIvProcessor.Phase.SAVED, recordId))
+            }
+            override fun swipeRight(result: (Boolean) -> Unit) {
+                sig = signature(0x22222222 + capturedCps.size * 0x11111111)
+                result(true)
+            }
+            override fun hint(message: String) {}
+        }
+
+        val scan = BoxReverseAutoScan(main, port) { msg, completed ->
+            doneResult = msg to completed
+        }
+        scan.start()
+        advance(12_000)
+
+        assertEquals(2, scrolls)
+        assertNotNull(tapped)
+        assertEquals(listOf(300, 400, 500), capturedCps)
+        assertTrue(doneResult?.second == true)
+    }
+
+    @Test fun entersReverseImmediatelyWhenRescannedPageAddsNoNewRows() {
+        val main = Handler(Looper.getMainLooper())
+        var sig = signature(0x11111111)
+        var appraisal = false
+        var scrolls = 0
+        var pageReads = 0
+        val capturedCps = mutableListOf<Int?>()
+        var doneResult: Pair<String, Boolean>? = null
+
+        val port = object : BoxReverseAutoScan.Port {
+            override fun foreground() = true
+            override fun frame() = ReaderAutoScan.Frame(sig, SystemClock.elapsedRealtime(), appraisal)
+            override fun readBoxPage(result: (BoxReverseAutoScan.BoxPageResult) -> Unit) {
+                pageReads++
+                result(BoxReverseAutoScan.BoxPageResult(
+                    listOf(BoxGridCpReader.BoxRow(listOf(500, 400, 300), 100)),
+                    750f to 200f
+                ))
+            }
+            override fun scrollBoxDown(result: (Boolean) -> Unit) {
+                scrolls++
+                sig = signature(0x11111111 + scrolls * 0x11111111)
+                result(true)
+            }
+            override fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit) {
+                appraisal = true
+                sig = signature(0x55555555)
+                result(true)
+            }
+            override fun openAppraisal(result: (Boolean) -> Unit) = result(true)
+            override fun capture(recordId: String, cpOverride: Int?, result: (OverlayIvProcessor.Outcome) -> Unit) {
+                capturedCps.add(cpOverride)
+                result(OverlayIvProcessor.Outcome("ok", true, "0,15,15", cpOverride, OverlayIvProcessor.Phase.SAVED, recordId))
+            }
+            override fun swipeRight(result: (Boolean) -> Unit) {
+                sig = signature(0x55555555 + capturedCps.size * 0x11111111)
+                result(true)
+            }
+            override fun hint(message: String) {}
+        }
+
+        val scan = BoxReverseAutoScan(main, port) { msg, completed ->
+            doneResult = msg to completed
+        }
+        scan.start()
+        advance(10_000)
+
+        assertEquals(2, pageReads)
+        assertEquals(1, scrolls)
+        assertEquals(listOf(300, 400, 500), capturedCps)
+        assertTrue(doneResult?.second == true)
+    }
 }
