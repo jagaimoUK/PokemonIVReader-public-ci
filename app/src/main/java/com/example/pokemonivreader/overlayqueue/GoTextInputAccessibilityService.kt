@@ -419,10 +419,10 @@ class GoTextInputAccessibilityService : AccessibilityService() {
                 if (bounds.isEmpty || bounds.width() >= bounds.height()) { result(false); return }
                 val x = bounds.left + bounds.width() * .50f
                 val path = Path().apply {
-                    moveTo(x, bounds.top + bounds.height() * .74f)
-                    lineTo(x, bounds.top + bounds.height() * .30f)
+                    moveTo(x, bounds.top + bounds.height() * .66f)
+                    lineTo(x, bounds.top + bounds.height() * .42f)
                 }
-                gesture(path, 480L, result)
+                gesture(path, 620L, result)
             }
             override fun tapPoint(x: Float, y: Float, result: (Boolean) -> Unit) {
                 if (!foreground()) { result(false); return }

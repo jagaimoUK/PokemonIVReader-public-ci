@@ -334,11 +334,17 @@ class ScreenCaptureService : Service() {
                     val r = (max(gridCoords[0], gridCoords[2]) * image.width).roundToInt().coerceIn(l + 1, image.width)
                     val t = (min(gridCoords[1], gridCoords[3]) * image.height).roundToInt().coerceIn(0, image.height - 1)
                     val b = (max(gridCoords[1], gridCoords[3]) * image.height).roundToInt().coerceIn(t + 1, image.height)
-                    val gridBounds = android.graphics.Rect(l, t, r, b)
-                    val crop = OverlayIvProcessor.copyRegion(image, l, t, r - l, b - t)
+                    val topPad = (image.height * 0.02f).roundToInt()
+                    val bottomPad = (image.height * 0.04f).roundToInt()
+                    val ocrTop = (t - topPad).coerceIn(0, image.height - 1)
+                    val ocrBottom = (b + bottomPad).coerceIn(ocrTop + 1, image.height)
+                    val ocrBounds = android.graphics.Rect(l, ocrTop, r, ocrBottom)
+                    val crop = OverlayIvProcessor.copyRegion(image, l, ocrTop, r - l, ocrBottom - ocrTop)
                     BoxGridCpReader.readRows(crop) { rows ->
                         if (!crop.isRecycled) crop.recycle()
-                        val tap = BoxGridCpReader.lastCardTapPoint(rows, gridBounds)
+                        val tap = BoxGridCpReader.lastCardTapPoint(rows, ocrBounds)?.let { (tx, ty) ->
+                            tx to ty.coerceIn(t + 10f, (b + topPad).coerceAtMost(image.height - 10).toFloat())
+                        }
                         main.post { callback(BoxReverseAutoScan.BoxPageResult(rows, tap)) }
                     }
                 }
